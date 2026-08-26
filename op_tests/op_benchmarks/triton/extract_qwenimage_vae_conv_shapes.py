@@ -43,6 +43,10 @@ OFFICIAL_RESOLUTIONS = [
     (1056, 1584),
 ]
 
+# Shapes exported to conv_shapes.json and summarised in the report come from
+# this resolution; the others only differ by a scaled H/W.
+REF_RESOLUTION = "1328x1328"
+
 DTYPE_MAP = {
     "bf16": torch.bfloat16,
     "fp16": torch.float16,
@@ -418,14 +422,10 @@ def conv2d_to_entry(rec: ConvRecord) -> dict:
     out = eval(rec.out_shape)
     k = out[1]
 
-    pad_h = pad_w = 0
-    if rec.kernel_h == 3 and rec.stride_h == 1:
-        pad_h = pad_w = 1
-    elif rec.kernel_h == 3 and rec.stride_h == 2:
-        # ZeroPad2d((0,1,0,1)) folded into spatial dims
-        h += 1
-        w += 1
-        pad_h = pad_w = 0
+    # The hook fires on the Conv2d itself, so for the downsample path h/w are
+    # already the ZeroPad2d((0,1,0,1)) output (e.g. 1329, not 1328) and the
+    # asymmetric pad is folded in at zero cost here.
+    pad_h = pad_w = 1 if (rec.kernel_h == 3 and rec.stride_h == 1) else 0
 
     return {
         "N": n,
@@ -449,9 +449,12 @@ def dedupe_conv2d_shapes(records: list[ConvRecord], call_counts: Counter) -> lis
     seen: set[tuple] = set()
     result: list[dict] = []
 
-    ref_res = "1328x1328"
+    # Encode and decode do not share a conv inventory: the stride-2 downsample
+    # convs only ever run on the encode pass, so both directions are needed.
     ref_recs = [
-        r for r in records if r.resolution == ref_res and r.direction == "decode"
+        r
+        for r in records
+        if r.resolution == REF_RESOLUTION and r.direction in ("encode", "decode")
     ]
 
     for rec in ref_recs:
@@ -490,9 +493,11 @@ def dedupe_conv2d_shapes(records: list[ConvRecord], call_counts: Counter) -> lis
 def dedupe_conv3d_shapes(records: list[ConvRecord], call_counts: Counter) -> list[dict]:
     seen: set[tuple] = set()
     result: list[dict] = []
-    ref_res = "1328x1328"
     for rec in records:
-        if rec.resolution != ref_res or rec.direction != "decode":
+        if rec.resolution != REF_RESOLUTION or rec.direction not in (
+            "encode",
+            "decode",
+        ):
             continue
         if rec.cls != "QwenImageCausalConv3d":
             continue
@@ -577,7 +582,7 @@ def write_report(
     records: list[ConvRecord], path: Path, dtype_label: str, param_info: dict
 ) -> None:
     ref = [
-        r for r in records if r.resolution == "1328x1328" and r.direction == "decode"
+        r for r in records if r.resolution == REF_RESOLUTION and r.direction == "decode"
     ]
     ref_alive = [r for r in ref if not (r.is_dead_path and r.macs == 0)]
 
