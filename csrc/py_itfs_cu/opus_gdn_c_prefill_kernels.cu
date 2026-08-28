@@ -132,8 +132,9 @@ void check_gfx942() {
         "failed to query HIP device properties: ",
         hipGetErrorString(properties_status));
     TORCH_CHECK(
-        std::strstr(properties.gcnArchName, "gfx942") != nullptr,
-        "opus_gdn_c_prefill currently requires gfx942, got ",
+        std::strstr(properties.gcnArchName, "gfx942") != nullptr ||
+            std::strstr(properties.gcnArchName, "gfx950") != nullptr,
+        "opus_gdn_c_prefill currently requires gfx942/gfx950, got ",
         properties.gcnArchName);
 }
 

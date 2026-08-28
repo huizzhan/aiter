@@ -120,9 +120,9 @@ def opus_gdn_c_prefill_fwd(
     if not q.is_cuda:
         raise ValueError("q must be a HIP tensor")
     device_gfx = torch.cuda.get_device_properties(q.device).gcnArchName.split(":", 1)[0]
-    if device_gfx != "gfx942":
+    if device_gfx not in ("gfx942", "gfx950"):
         raise ValueError(
-            f"opus_gdn_c_prefill currently requires gfx942, got {device_gfx}"
+            f"opus_gdn_c_prefill currently requires gfx942/gfx950, got {device_gfx}"
         )
 
     B, T, Hg, K = q.shape

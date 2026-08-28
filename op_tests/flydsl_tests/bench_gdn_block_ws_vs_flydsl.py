@@ -255,8 +255,8 @@ def unsupported_reason(backend: str) -> str:
     """Why this device cannot run the backend, or "" when it can."""
     if backend in ("cf", "cs"):
         gfx = torch.cuda.get_device_properties(0).gcnArchName.split(":", 1)[0]
-        if gfx != "gfx942":
-            return f"the C-input families require gfx942, this is {gfx}"
+        if gfx not in ("gfx942", "gfx950"):
+            return f"the C-input families require gfx942/gfx950, this is {gfx}"
     if backend in ("cf", "cs") and FULL_PROMPT_LEN % 64:
         return f"the C-input families require 64 | full_prompt_len={FULL_PROMPT_LEN}"
     return ""
