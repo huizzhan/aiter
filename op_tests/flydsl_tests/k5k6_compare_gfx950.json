@@ -1,0 +1,2148 @@
+{
+ "gfx": "gfx950:sramecc+:xnack-",
+ "cus": 256,
+ "device": "AMD Radeon Graphics",
+ "torch": "2.10.0+rocm7.2.4.git3d3aa833",
+ "aiter_path": "/workspace/aiter/aiter/__init__.py",
+ "flydsl_cu_count": 256,
+ "front": "triton",
+ "fused_unsupported_reason": null,
+ "auto_would_fuse_here": false,
+ "Hk_model": 16,
+ "Hv_model": 64,
+ "gqa_ratio": 4,
+ "tps": [
+  1,
+  2,
+  4,
+  8
+ ],
+ "seqlens": [
+  1024,
+  2048,
+  4096,
+  8192
+ ],
+ "totals": [
+  8192,
+  16384,
+  32768,
+  65536
+ ],
+ "num_iters": 50,
+ "prof_iters": 20,
+ "cells": [
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 1024,
+   "total_tokens": 8192,
+   "n_seqs": 8,
+   "bh": 512,
+   "backends": {
+    "wf": {
+     "wall_us": 437.60499358177185,
+     "k5k6_us": 255.1199,
+     "front_us": 179.38315000000006,
+     "kernel_sum_us": 434.50305000000003
+    },
+    "fly": {
+     "wall_us": 674.2470264434814,
+     "k5k6_us": 303.3605500000002,
+     "front_us": 366.15124999999966,
+     "kernel_sum_us": 669.5117999999999,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 214.52300250530243,
+     "k5k6_us": 203.57735000000008,
+     "front_us": 0,
+     "kernel_sum_us": 203.57735000000008,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 1024,
+   "total_tokens": 16384,
+   "n_seqs": 16,
+   "bh": 1024,
+   "backends": {
+    "wf": {
+     "wall_us": 850.2100110054016,
+     "k5k6_us": 499.8628499999997,
+     "front_us": 348.0710500000001,
+     "kernel_sum_us": 847.9338999999998
+    },
+    "fly": {
+     "wall_us": 1337.496042251587,
+     "k5k6_us": 615.6101000000001,
+     "front_us": 719.9733999999999,
+     "kernel_sum_us": 1335.5835,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 411.08500957489014,
+     "k5k6_us": 405.32969999999995,
+     "front_us": 0,
+     "kernel_sum_us": 405.32969999999995,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 1024,
+   "total_tokens": 32768,
+   "n_seqs": 32,
+   "bh": 2048,
+   "backends": {
+    "wf": {
+     "wall_us": 1822.8609561920166,
+     "k5k6_us": 1072.2413500000005,
+     "front_us": 738.7776999999996,
+     "kernel_sum_us": 1811.01905
+    },
+    "fly": {
+     "wall_us": 2644.2699432373047,
+     "k5k6_us": 1212.7151499999995,
+     "front_us": 1436.843600000001,
+     "kernel_sum_us": 2649.5587500000006,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 814.4099712371826,
+     "k5k6_us": 921.2157500000003,
+     "front_us": 0,
+     "kernel_sum_us": 921.2157500000003,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 1024,
+   "total_tokens": 65536,
+   "n_seqs": 64,
+   "bh": 4096,
+   "backends": {
+    "wf": {
+     "wall_us": 3665.1229858398438,
+     "k5k6_us": 2175.3864000000003,
+     "front_us": 1482.6262499999996,
+     "kernel_sum_us": 3658.0126499999997
+    },
+    "fly": {
+     "wall_us": 5303.821086883545,
+     "k5k6_us": 2418.8071000000004,
+     "front_us": 2893.1287999999977,
+     "kernel_sum_us": 5311.935899999998,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 1822.8609561920166,
+     "k5k6_us": 1884.52095,
+     "front_us": 0,
+     "kernel_sum_us": 1884.52095,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 2048,
+   "total_tokens": 8192,
+   "n_seqs": 4,
+   "bh": 256,
+   "backends": {
+    "wf": {
+     "wall_us": 445.56498527526855,
+     "k5k6_us": 253.02795,
+     "front_us": 179.66709999999998,
+     "kernel_sum_us": 432.69505
+    },
+    "fly": {
+     "wall_us": 667.6080226898193,
+     "k5k6_us": 298.61249999999995,
+     "front_us": 367.2792499999998,
+     "kernel_sum_us": 665.8917499999998,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 212.68199384212494,
+     "k5k6_us": 200.99734999999995,
+     "front_us": 0,
+     "kernel_sum_us": 200.99734999999995,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 2048,
+   "total_tokens": 16384,
+   "n_seqs": 8,
+   "bh": 512,
+   "backends": {
+    "wf": {
+     "wall_us": 845.5299735069275,
+     "k5k6_us": 514.5730499999997,
+     "front_us": 357.9331000000003,
+     "kernel_sum_us": 872.50615
+    },
+    "fly": {
+     "wall_us": 1318.7750577926636,
+     "k5k6_us": 590.9758999999997,
+     "front_us": 721.9154000000003,
+     "kernel_sum_us": 1312.8913,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 396.16501331329346,
+     "k5k6_us": 392.52955000000003,
+     "front_us": 0,
+     "kernel_sum_us": 392.52955000000003,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 2048,
+   "total_tokens": 32768,
+   "n_seqs": 16,
+   "bh": 1024,
+   "backends": {
+    "wf": {
+     "wall_us": 1804.540991783142,
+     "k5k6_us": 1048.01735,
+     "front_us": 742.0314999999998,
+     "kernel_sum_us": 1790.04885
+    },
+    "fly": {
+     "wall_us": 2609.3499660491943,
+     "k5k6_us": 1179.6008499999996,
+     "front_us": 1443.5097499999995,
+     "kernel_sum_us": 2623.110599999999,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 797.7690100669861,
+     "k5k6_us": 909.6755999999999,
+     "front_us": 0,
+     "kernel_sum_us": 909.6755999999999,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 2048,
+   "total_tokens": 65536,
+   "n_seqs": 32,
+   "bh": 2048,
+   "backends": {
+    "wf": {
+     "wall_us": 3618.4420585632324,
+     "k5k6_us": 2127.0739,
+     "front_us": 1480.9422499999998,
+     "kernel_sum_us": 3608.0161499999995
+    },
+    "fly": {
+     "wall_us": 5266.180992126465,
+     "k5k6_us": 2368.932599999999,
+     "front_us": 2894.7147499999983,
+     "kernel_sum_us": 5263.6473499999975,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 1796.9809770584106,
+     "k5k6_us": 1838.08045,
+     "front_us": 0,
+     "kernel_sum_us": 1838.08045,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 4096,
+   "total_tokens": 8192,
+   "n_seqs": 2,
+   "bh": 128,
+   "backends": {
+    "wf": {
+     "wall_us": 644.8869705200195,
+     "k5k6_us": 460.44635000000017,
+     "front_us": 179.69509999999994,
+     "kernel_sum_us": 640.1414500000001
+    },
+    "fly": {
+     "wall_us": 668.927013874054,
+     "k5k6_us": 298.58040000000017,
+     "front_us": 367.80134999999996,
+     "kernel_sum_us": 666.3817500000001,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 309.76301431655884,
+     "k5k6_us": 297.42445,
+     "front_us": 0,
+     "kernel_sum_us": 297.42445,
+     "variant": "bv32"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv32"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 4096,
+   "total_tokens": 16384,
+   "n_seqs": 4,
+   "bh": 256,
+   "backends": {
+    "wf": {
+     "wall_us": 829.8900127410889,
+     "k5k6_us": 486.47265,
+     "front_us": 341.81894999999986,
+     "kernel_sum_us": 828.2915999999998
+    },
+    "fly": {
+     "wall_us": 1304.9349784851074,
+     "k5k6_us": 583.0497999999998,
+     "front_us": 720.1134000000001,
+     "kernel_sum_us": 1303.1631999999997,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 400.16499161720276,
+     "k5k6_us": 389.82155,
+     "front_us": 0,
+     "kernel_sum_us": 389.82155,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 4096,
+   "total_tokens": 32768,
+   "n_seqs": 8,
+   "bh": 512,
+   "backends": {
+    "wf": {
+     "wall_us": 1791.2609577178955,
+     "k5k6_us": 1033.5630500000002,
+     "front_us": 742.2575999999996,
+     "kernel_sum_us": 1775.8206499999997
+    },
+    "fly": {
+     "wall_us": 2600.3921031951904,
+     "k5k6_us": 1165.74875,
+     "front_us": 1449.0897999999997,
+     "kernel_sum_us": 2614.8385499999995,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 792.6899790763855,
+     "k5k6_us": 902.2335000000003,
+     "front_us": 0,
+     "kernel_sum_us": 902.2335000000003,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 4096,
+   "total_tokens": 65536,
+   "n_seqs": 16,
+   "bh": 1024,
+   "backends": {
+    "wf": {
+     "wall_us": 3332.3988914489746,
+     "k5k6_us": 2091.5374499999994,
+     "front_us": 1480.1962000000003,
+     "kernel_sum_us": 3571.7336499999997
+    },
+    "fly": {
+     "wall_us": 5231.941223144531,
+     "k5k6_us": 2334.0863000000004,
+     "front_us": 2897.6307999999976,
+     "kernel_sum_us": 5231.717099999998,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 1789.8600101470947,
+     "k5k6_us": 1822.8442999999995,
+     "front_us": 0,
+     "kernel_sum_us": 1822.8442999999995,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 8192,
+   "total_tokens": 8192,
+   "n_seqs": 1,
+   "bh": 64,
+   "backends": {
+    "wf": {
+     "wall_us": 1068.1730508804321,
+     "k5k6_us": 884.3012499999995,
+     "front_us": 182.98920000000024,
+     "kernel_sum_us": 1067.2904499999997
+    },
+    "fly": {
+     "wall_us": 957.8909873962402,
+     "k5k6_us": 586.6337500000002,
+     "front_us": 369.16940000000005,
+     "kernel_sum_us": 955.8031500000003,
+     "variant": "bv64"
+    },
+    "flyfix": {
+     "wall_us": 489.04600739479065,
+     "k5k6_us": 484.6986500000001,
+     "front_us": 0,
+     "kernel_sum_us": 484.6986500000001,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 8192,
+   "total_tokens": 16384,
+   "n_seqs": 2,
+   "bh": 128,
+   "backends": {
+    "wf": {
+     "wall_us": 1247.614026069641,
+     "k5k6_us": 902.5875500000002,
+     "front_us": 343.25900000000047,
+     "kernel_sum_us": 1245.8465500000007
+    },
+    "fly": {
+     "wall_us": 1303.575038909912,
+     "k5k6_us": 576.6816999999999,
+     "front_us": 724.4895000000002,
+     "kernel_sum_us": 1301.1712000000002,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 593.5670137405396,
+     "k5k6_us": 588.3478499999999,
+     "front_us": 0,
+     "kernel_sum_us": 588.3478499999999,
+     "variant": "bv32"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv32"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 8192,
+   "total_tokens": 32768,
+   "n_seqs": 4,
+   "bh": 256,
+   "backends": {
+    "wf": {
+     "wall_us": 1774.2609977722168,
+     "k5k6_us": 1029.6433,
+     "front_us": 742.9794000000002,
+     "kernel_sum_us": 1772.6227000000001
+    },
+    "fly": {
+     "wall_us": 2596.0309505462646,
+     "k5k6_us": 1158.7065499999997,
+     "front_us": 1447.5719000000006,
+     "kernel_sum_us": 2606.2784500000002,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 783.5289835929871,
+     "k5k6_us": 899.5474999999999,
+     "front_us": 0,
+     "kernel_sum_us": 899.5474999999999,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 1,
+   "H": 64,
+   "Hg": 16,
+   "seqlen": 8192,
+   "total_tokens": 65536,
+   "n_seqs": 8,
+   "bh": 512,
+   "backends": {
+    "wf": {
+     "wall_us": 3576.442003250122,
+     "k5k6_us": 2081.7273499999997,
+     "front_us": 1482.5203000000001,
+     "kernel_sum_us": 3564.24765
+    },
+    "fly": {
+     "wall_us": 5202.02112197876,
+     "k5k6_us": 2314.282049999999,
+     "front_us": 2901.2968999999975,
+     "kernel_sum_us": 5215.578949999996,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 1779.9400091171265,
+     "k5k6_us": 1824.3563000000001,
+     "front_us": 0,
+     "kernel_sum_us": 1824.3563000000001,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 1024,
+   "total_tokens": 8192,
+   "n_seqs": 8,
+   "bh": 256,
+   "backends": {
+    "wf": {
+     "wall_us": 226.76199674606323,
+     "k5k6_us": 122.49050000000004,
+     "front_us": 91.21199999999996,
+     "kernel_sum_us": 213.7025
+    },
+    "fly": {
+     "wall_us": 321.7630088329315,
+     "k5k6_us": 145.1526500000001,
+     "front_us": 169.6390500000001,
+     "kernel_sum_us": 314.7917000000002,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 110.04099994897842,
+     "k5k6_us": 104.26420000000003,
+     "front_us": 0,
+     "kernel_sum_us": 104.26420000000003,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 1024,
+   "total_tokens": 16384,
+   "n_seqs": 16,
+   "bh": 512,
+   "backends": {
+    "wf": {
+     "wall_us": 438.96499276161194,
+     "k5k6_us": 256.4820000000001,
+     "front_us": 178.78109999999987,
+     "kernel_sum_us": 435.26309999999995
+    },
+    "fly": {
+     "wall_us": 654.1669964790344,
+     "k5k6_us": 302.6426,
+     "front_us": 349.1170000000002,
+     "kernel_sum_us": 651.7596000000002,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 216.60199761390686,
+     "k5k6_us": 204.71335000000005,
+     "front_us": 0,
+     "kernel_sum_us": 204.71335000000005,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 1024,
+   "total_tokens": 32768,
+   "n_seqs": 32,
+   "bh": 1024,
+   "backends": {
+    "wf": {
+     "wall_us": 844.2100286483765,
+     "k5k6_us": 506.05294999999967,
+     "front_us": 336.65090000000015,
+     "kernel_sum_us": 842.7038499999999
+    },
+    "fly": {
+     "wall_us": 1328.6960124969482,
+     "k5k6_us": 624.54025,
+     "front_us": 700.0152000000004,
+     "kernel_sum_us": 1324.5554500000003,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 410.24500131607056,
+     "k5k6_us": 404.9776999999999,
+     "front_us": 0,
+     "kernel_sum_us": 404.9776999999999,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 1024,
+   "total_tokens": 65536,
+   "n_seqs": 64,
+   "bh": 2048,
+   "backends": {
+    "wf": {
+     "wall_us": 1834.421992301941,
+     "k5k6_us": 1086.7916999999995,
+     "front_us": 723.0594500000001,
+     "kernel_sum_us": 1809.8511499999995
+    },
+    "fly": {
+     "wall_us": 2632.7109336853027,
+     "k5k6_us": 1225.0373499999998,
+     "front_us": 1417.6995000000006,
+     "kernel_sum_us": 2642.7368500000002,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 817.969024181366,
+     "k5k6_us": 931.8678500000002,
+     "front_us": 0,
+     "kernel_sum_us": 931.8678500000002,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 2048,
+   "total_tokens": 8192,
+   "n_seqs": 4,
+   "bh": 128,
+   "backends": {
+    "wf": {
+     "wall_us": 308.72398614883423,
+     "k5k6_us": 204.92934999999994,
+     "front_us": 90.98010000000004,
+     "kernel_sum_us": 295.90945
+    },
+    "fly": {
+     "wall_us": 316.56399369239807,
+     "k5k6_us": 143.07664999999997,
+     "front_us": 170.04700000000003,
+     "kernel_sum_us": 313.12365,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 148.24199676513672,
+     "k5k6_us": 138.2126,
+     "front_us": 0,
+     "kernel_sum_us": 138.2126,
+     "variant": "bv32"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv32"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 2048,
+   "total_tokens": 16384,
+   "n_seqs": 8,
+   "bh": 256,
+   "backends": {
+    "wf": {
+     "wall_us": 429.1650056838989,
+     "k5k6_us": 246.48594999999995,
+     "front_us": 181.07900000000004,
+     "kernel_sum_us": 427.56494999999995
+    },
+    "fly": {
+     "wall_us": 650.6069898605347,
+     "k5k6_us": 300.54649999999964,
+     "front_us": 349.14905000000016,
+     "kernel_sum_us": 649.6955499999998,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 213.48200738430023,
+     "k5k6_us": 203.32939999999996,
+     "front_us": 0,
+     "kernel_sum_us": 203.32939999999996,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 2048,
+   "total_tokens": 32768,
+   "n_seqs": 16,
+   "bh": 512,
+   "backends": {
+    "wf": {
+     "wall_us": 826.5699744224548,
+     "k5k6_us": 490.69670000000013,
+     "front_us": 337.46095,
+     "kernel_sum_us": 828.1576500000001
+    },
+    "fly": {
+     "wall_us": 1308.2950115203857,
+     "k5k6_us": 606.2320500000003,
+     "front_us": 700.3431999999996,
+     "kernel_sum_us": 1306.5752499999999,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 406.0850143432617,
+     "k5k6_us": 397.30365,
+     "front_us": 0,
+     "kernel_sum_us": 397.30365,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 2048,
+   "total_tokens": 65536,
+   "n_seqs": 32,
+   "bh": 1024,
+   "backends": {
+    "wf": {
+     "wall_us": 1792.1810150146484,
+     "k5k6_us": 1058.279250000001,
+     "front_us": 718.4114999999994,
+     "kernel_sum_us": 1776.6907500000002
+    },
+    "fly": {
+     "wall_us": 2607.1910858154297,
+     "k5k6_us": 1194.1389500000005,
+     "front_us": 1415.7735499999994,
+     "kernel_sum_us": 2609.9125,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 809.2489838600159,
+     "k5k6_us": 913.2156499999999,
+     "front_us": 0,
+     "kernel_sum_us": 913.2156499999999,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 4096,
+   "total_tokens": 8192,
+   "n_seqs": 2,
+   "bh": 64,
+   "backends": {
+    "wf": {
+     "wall_us": 479.6060025691986,
+     "k5k6_us": 386.0074999999999,
+     "front_us": 91.65810000000008,
+     "kernel_sum_us": 477.6655999999999
+    },
+    "fly": {
+     "wall_us": 462.00600266456604,
+     "k5k6_us": 288.07635,
+     "front_us": 171.31699999999995,
+     "kernel_sum_us": 459.39334999999994,
+     "variant": "bv64"
+    },
+    "flyfix": {
+     "wall_us": 225.96199810504913,
+     "k5k6_us": 212.16950000000006,
+     "front_us": 0,
+     "kernel_sum_us": 212.16950000000006,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 4096,
+   "total_tokens": 16384,
+   "n_seqs": 4,
+   "bh": 128,
+   "backends": {
+    "wf": {
+     "wall_us": 626.9279718399048,
+     "k5k6_us": 445.82815,
+     "front_us": 179.24114999999995,
+     "kernel_sum_us": 625.0692999999999
+    },
+    "fly": {
+     "wall_us": 645.7269787788391,
+     "k5k6_us": 294.6964500000002,
+     "front_us": 349.6690500000002,
+     "kernel_sum_us": 644.3655000000003,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 308.9640140533447,
+     "k5k6_us": 299.6124999999999,
+     "front_us": 0,
+     "kernel_sum_us": 299.6124999999999,
+     "variant": "bv32"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv32"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 4096,
+   "total_tokens": 32768,
+   "n_seqs": 8,
+   "bh": 256,
+   "backends": {
+    "wf": {
+     "wall_us": 813.5700225830078,
+     "k5k6_us": 477.4664999999999,
+     "front_us": 335.73095,
+     "kernel_sum_us": 813.1974499999999
+    },
+    "fly": {
+     "wall_us": 1298.454999923706,
+     "k5k6_us": 594.8659500000003,
+     "front_us": 700.5131999999995,
+     "kernel_sum_us": 1295.3791499999998,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 398.9650011062622,
+     "k5k6_us": 391.1695499999999,
+     "front_us": 0,
+     "kernel_sum_us": 391.1695499999999,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 4096,
+   "total_tokens": 65536,
+   "n_seqs": 16,
+   "bh": 512,
+   "backends": {
+    "wf": {
+     "wall_us": 1777.5009870529175,
+     "k5k6_us": 1043.1610999999998,
+     "front_us": 717.8574999999998,
+     "kernel_sum_us": 1761.0185999999997
+    },
+    "fly": {
+     "wall_us": 2584.549903869629,
+     "k5k6_us": 1177.2389500000004,
+     "front_us": 1420.2253500000004,
+     "kernel_sum_us": 2597.4643000000005,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 798.5690236091614,
+     "k5k6_us": 904.30955,
+     "front_us": 0,
+     "kernel_sum_us": 904.30955,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 8192,
+   "total_tokens": 8192,
+   "n_seqs": 1,
+   "bh": 32,
+   "backends": {
+    "wf": {
+     "wall_us": 856.4500212669373,
+     "k5k6_us": 761.08775,
+     "front_us": 93.29619999999997,
+     "kernel_sum_us": 854.38395
+    },
+    "fly": {
+     "wall_us": 632.2870254516602,
+     "k5k6_us": 456.5383500000001,
+     "front_us": 171.6290000000001,
+     "kernel_sum_us": 628.1673500000002,
+     "variant": "bv32"
+    },
+    "flyfix": {
+     "wall_us": 345.4839885234833,
+     "k5k6_us": 341.691,
+     "front_us": 0,
+     "kernel_sum_us": 341.691,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 8192,
+   "total_tokens": 16384,
+   "n_seqs": 2,
+   "bh": 64,
+   "backends": {
+    "wf": {
+     "wall_us": 1039.6519899368286,
+     "k5k6_us": 857.9830500000002,
+     "front_us": 180.17309999999983,
+     "kernel_sum_us": 1038.15615
+    },
+    "fly": {
+     "wall_us": 943.1310296058655,
+     "k5k6_us": 586.124,
+     "front_us": 354.84699999999987,
+     "kernel_sum_us": 940.9709999999999,
+     "variant": "bv64"
+    },
+    "flyfix": {
+     "wall_us": 490.40600657463074,
+     "k5k6_us": 482.6246500000001,
+     "front_us": 0,
+     "kernel_sum_us": 482.6246500000001,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 8192,
+   "total_tokens": 32768,
+   "n_seqs": 4,
+   "bh": 128,
+   "backends": {
+    "wf": {
+     "wall_us": 1230.9739589691162,
+     "k5k6_us": 891.1333999999999,
+     "front_us": 336.45894999999973,
+     "kernel_sum_us": 1227.5923499999997
+    },
+    "fly": {
+     "wall_us": 1294.41499710083,
+     "k5k6_us": 590.36185,
+     "front_us": 703.2292999999999,
+     "kernel_sum_us": 1293.59115,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 603.3279895782471,
+     "k5k6_us": 596.4020000000002,
+     "front_us": 0,
+     "kernel_sum_us": 596.4020000000002,
+     "variant": "bv32"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv32"
+  },
+  {
+   "tp": 2,
+   "H": 32,
+   "Hg": 8,
+   "seqlen": 8192,
+   "total_tokens": 65536,
+   "n_seqs": 8,
+   "bh": 256,
+   "backends": {
+    "wf": {
+     "wall_us": 1767.1400308609009,
+     "k5k6_us": 1030.1329500000004,
+     "front_us": 719.0295000000003,
+     "kernel_sum_us": 1749.1624500000007
+    },
+    "fly": {
+     "wall_us": 2572.9498863220215,
+     "k5k6_us": 1170.0668,
+     "front_us": 1420.8554999999997,
+     "kernel_sum_us": 2590.9222999999997,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 792.8900122642517,
+     "k5k6_us": 899.0495000000003,
+     "front_us": 0,
+     "kernel_sum_us": 899.0495000000003,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 1024,
+   "total_tokens": 8192,
+   "n_seqs": 8,
+   "bh": 128,
+   "backends": {
+    "wf": {
+     "wall_us": 155.7220071554184,
+     "k5k6_us": 103.77025000000003,
+     "front_us": 41.201449999999966,
+     "kernel_sum_us": 144.9717
+    },
+    "fly": {
+     "wall_us": 171.3619977235794,
+     "k5k6_us": 66.22980000000007,
+     "front_us": 97.18209999999998,
+     "kernel_sum_us": 163.41190000000006,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 79.68100160360336,
+     "k5k6_us": 75.02990000000003,
+     "front_us": 0,
+     "kernel_sum_us": 75.02990000000003,
+     "variant": "bv32"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv32"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 1024,
+   "total_tokens": 16384,
+   "n_seqs": 16,
+   "bh": 256,
+   "backends": {
+    "wf": {
+     "wall_us": 216.2420004606247,
+     "k5k6_us": 117.13029999999999,
+     "front_us": 88.18609999999998,
+     "kernel_sum_us": 205.3164
+    },
+    "fly": {
+     "wall_us": 314.4429922103882,
+     "k5k6_us": 146.0567,
+     "front_us": 165.5829499999999,
+     "kernel_sum_us": 311.6396499999999,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 109.80100184679031,
+     "k5k6_us": 103.50625,
+     "front_us": 0,
+     "kernel_sum_us": 103.50625,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 1024,
+   "total_tokens": 32768,
+   "n_seqs": 32,
+   "bh": 512,
+   "backends": {
+    "wf": {
+     "wall_us": 429.8050105571747,
+     "k5k6_us": 251.76,
+     "front_us": 175.22499999999997,
+     "kernel_sum_us": 426.98499999999996
+    },
+    "fly": {
+     "wall_us": 630.1670074462891,
+     "k5k6_us": 309.2267,
+     "front_us": 318.36665000000005,
+     "kernel_sum_us": 627.5933500000001,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 217.24200248718262,
+     "k5k6_us": 207.05340000000007,
+     "front_us": 0,
+     "kernel_sum_us": 207.05340000000007,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 1024,
+   "total_tokens": 65536,
+   "n_seqs": 64,
+   "bh": 1024,
+   "backends": {
+    "wf": {
+     "wall_us": 836.8489742279053,
+     "k5k6_us": 504.6127999999999,
+     "front_us": 330.59700000000004,
+     "kernel_sum_us": 835.2097999999999
+    },
+    "fly": {
+     "wall_us": 1293.215036392212,
+     "k5k6_us": 627.8704,
+     "front_us": 670.9168000000001,
+     "kernel_sum_us": 1298.7872,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 406.9249927997589,
+     "k5k6_us": 413.80785000000003,
+     "front_us": 0,
+     "kernel_sum_us": 413.80785000000003,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 2048,
+   "total_tokens": 8192,
+   "n_seqs": 4,
+   "bh": 64,
+   "backends": {
+    "wf": {
+     "wall_us": 239.40199613571167,
+     "k5k6_us": 195.60520000000002,
+     "front_us": 41.33155000000006,
+     "kernel_sum_us": 236.93675000000007
+    },
+    "fly": {
+     "wall_us": 237.28199303150177,
+     "k5k6_us": 135.8584999999999,
+     "front_us": 96.88820000000005,
+     "kernel_sum_us": 232.74669999999998,
+     "variant": "bv64"
+    },
+    "flyfix": {
+     "wall_us": 117.60099977254868,
+     "k5k6_us": 110.26029999999999,
+     "front_us": 0,
+     "kernel_sum_us": 110.26029999999999,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 2048,
+   "total_tokens": 16384,
+   "n_seqs": 8,
+   "bh": 128,
+   "backends": {
+    "wf": {
+     "wall_us": 306.00398778915405,
+     "k5k6_us": 212.95954999999995,
+     "front_us": 89.65599999999998,
+     "kernel_sum_us": 302.6155499999999
+    },
+    "fly": {
+     "wall_us": 307.32300877571106,
+     "k5k6_us": 138.50259999999992,
+     "front_us": 165.22694999999993,
+     "kernel_sum_us": 303.72954999999985,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 147.40200340747833,
+     "k5k6_us": 137.84060000000005,
+     "front_us": 0,
+     "kernel_sum_us": 137.84060000000005,
+     "variant": "bv32"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv32"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 2048,
+   "total_tokens": 32768,
+   "n_seqs": 16,
+   "bh": 256,
+   "backends": {
+    "wf": {
+     "wall_us": 421.2850034236908,
+     "k5k6_us": 242.00784999999996,
+     "front_us": 176.40505000000002,
+     "kernel_sum_us": 418.4129
+    },
+    "fly": {
+     "wall_us": 625.5670189857483,
+     "k5k6_us": 301.83460000000014,
+     "front_us": 322.4446999999997,
+     "kernel_sum_us": 624.2792999999999,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 214.52200412750244,
+     "k5k6_us": 204.3774,
+     "front_us": 0,
+     "kernel_sum_us": 204.3774,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 2048,
+   "total_tokens": 65536,
+   "n_seqs": 32,
+   "bh": 512,
+   "backends": {
+    "wf": {
+     "wall_us": 818.2899951934814,
+     "k5k6_us": 495.85285000000005,
+     "front_us": 333.93485000000004,
+     "kernel_sum_us": 829.7877000000001
+    },
+    "fly": {
+     "wall_us": 1274.8550176620483,
+     "k5k6_us": 609.1460500000002,
+     "front_us": 667.93085,
+     "kernel_sum_us": 1277.0769,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 405.80499172210693,
+     "k5k6_us": 395.4476000000001,
+     "front_us": 0,
+     "kernel_sum_us": 395.4476000000001,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 4096,
+   "total_tokens": 8192,
+   "n_seqs": 2,
+   "bh": 32,
+   "backends": {
+    "wf": {
+     "wall_us": 430.88600039482117,
+     "k5k6_us": 385.55364999999995,
+     "front_us": 42.69735000000011,
+     "kernel_sum_us": 428.25100000000003
+    },
+    "fly": {
+     "wall_us": 301.0840117931366,
+     "k5k6_us": 201.38135,
+     "front_us": 97.41214999999995,
+     "kernel_sum_us": 298.79349999999994,
+     "variant": "bv32"
+    },
+    "flyfix": {
+     "wall_us": 177.2419959306717,
+     "k5k6_us": 169.969,
+     "front_us": 0,
+     "kernel_sum_us": 169.969,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 4096,
+   "total_tokens": 16384,
+   "n_seqs": 4,
+   "bh": 64,
+   "backends": {
+    "wf": {
+     "wall_us": 480.1659882068634,
+     "k5k6_us": 386.8714500000001,
+     "front_us": 90.99215,
+     "kernel_sum_us": 477.8636000000001
+    },
+    "fly": {
+     "wall_us": 458.28500390052795,
+     "k5k6_us": 288.98445000000004,
+     "front_us": 167.1008499999999,
+     "kernel_sum_us": 456.08529999999996,
+     "variant": "bv64"
+    },
+    "flyfix": {
+     "wall_us": 224.56200420856476,
+     "k5k6_us": 212.41150000000007,
+     "front_us": 0,
+     "kernel_sum_us": 212.41150000000007,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 4096,
+   "total_tokens": 32768,
+   "n_seqs": 8,
+   "bh": 128,
+   "backends": {
+    "wf": {
+     "wall_us": 622.7669715881348,
+     "k5k6_us": 443.3901000000001,
+     "front_us": 175.96710000000013,
+     "kernel_sum_us": 619.3572000000001
+    },
+    "fly": {
+     "wall_us": 623.848021030426,
+     "k5k6_us": 296.66445000000004,
+     "front_us": 324.6468500000001,
+     "kernel_sum_us": 621.3113000000001,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 315.7230019569397,
+     "k5k6_us": 302.0445,
+     "front_us": 0,
+     "kernel_sum_us": 302.0445,
+     "variant": "bv32"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv32"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 4096,
+   "total_tokens": 65536,
+   "n_seqs": 16,
+   "bh": 256,
+   "backends": {
+    "wf": {
+     "wall_us": 804.9290180206299,
+     "k5k6_us": 480.80859999999984,
+     "front_us": 330.99485,
+     "kernel_sum_us": 811.8034499999999
+    },
+    "fly": {
+     "wall_us": 1265.1339769363403,
+     "k5k6_us": 601.1602000000004,
+     "front_us": 669.1786999999997,
+     "kernel_sum_us": 1270.3389000000002,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 401.24401450157166,
+     "k5k6_us": 393.9075999999999,
+     "front_us": 0,
+     "kernel_sum_us": 393.9075999999999,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 8192,
+   "total_tokens": 8192,
+   "n_seqs": 1,
+   "bh": 16,
+   "backends": {
+    "wf": {
+     "wall_us": 813.9299750328064,
+     "k5k6_us": 767.0938999999997,
+     "front_us": 43.63955000000022,
+     "kernel_sum_us": 810.73345
+    },
+    "fly": {
+     "wall_us": 431.00500106811523,
+     "k5k6_us": 331.48900000000015,
+     "front_us": 98.4100499999999,
+     "kernel_sum_us": 429.89905000000005,
+     "variant": "bv16"
+    },
+    "flyfix": {
+     "wall_us": 338.40399980545044,
+     "k5k6_us": 335.21090000000015,
+     "front_us": 0,
+     "kernel_sum_us": 335.21090000000015,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 8192,
+   "total_tokens": 16384,
+   "n_seqs": 2,
+   "bh": 32,
+   "backends": {
+    "wf": {
+     "wall_us": 858.0099940299988,
+     "k5k6_us": 762.9275999999999,
+     "front_us": 91.59435000000005,
+     "kernel_sum_us": 854.52195
+    },
+    "fly": {
+     "wall_us": 629.6070218086243,
+     "k5k6_us": 457.5724,
+     "front_us": 168.33689999999976,
+     "kernel_sum_us": 625.9092999999998,
+     "variant": "bv32"
+    },
+    "flyfix": {
+     "wall_us": 341.04400873184204,
+     "k5k6_us": 336.9689,
+     "front_us": 0,
+     "kernel_sum_us": 336.9689,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 8192,
+   "total_tokens": 32768,
+   "n_seqs": 4,
+   "bh": 64,
+   "backends": {
+    "wf": {
+     "wall_us": 1035.8519554138184,
+     "k5k6_us": 854.4830000000002,
+     "front_us": 178.49510000000004,
+     "kernel_sum_us": 1032.9781000000003
+    },
+    "fly": {
+     "wall_us": 918.8510179519653,
+     "k5k6_us": 586.9818499999999,
+     "front_us": 330.1989,
+     "kernel_sum_us": 917.1807499999999,
+     "variant": "bv64"
+    },
+    "flyfix": {
+     "wall_us": 494.9660003185272,
+     "k5k6_us": 489.1766999999998,
+     "front_us": 0,
+     "kernel_sum_us": 489.1766999999998,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 4,
+   "H": 16,
+   "Hg": 4,
+   "seqlen": 8192,
+   "total_tokens": 65536,
+   "n_seqs": 8,
+   "bh": 128,
+   "backends": {
+    "wf": {
+     "wall_us": 1213.894009590149,
+     "k5k6_us": 878.9393000000003,
+     "front_us": 330.9168499999997,
+     "kernel_sum_us": 1209.85615
+    },
+    "fly": {
+     "wall_us": 1248.0950355529785,
+     "k5k6_us": 583.6398999999999,
+     "front_us": 662.0206499999999,
+     "kernel_sum_us": 1245.6605499999998,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 603.5670042037964,
+     "k5k6_us": 597.2439499999999,
+     "front_us": 0,
+     "kernel_sum_us": 597.2439499999999,
+     "variant": "bv32"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv32"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 1024,
+   "total_tokens": 8192,
+   "n_seqs": 8,
+   "bh": 64,
+   "backends": {
+    "wf": {
+     "wall_us": 127.96099483966827,
+     "k5k6_us": 101.05824999999997,
+     "front_us": 24.62519999999999,
+     "kernel_sum_us": 125.68344999999997
+    },
+    "fly": {
+     "wall_us": 134.92199778556824,
+     "k5k6_us": 72.02990000000003,
+     "front_us": 51.39760000000007,
+     "kernel_sum_us": 123.4275000000001,
+     "variant": "bv64"
+    },
+    "flyfix": {
+     "wall_us": 64.16100263595581,
+     "k5k6_us": 61.129750000000016,
+     "front_us": 0,
+     "kernel_sum_us": 61.129750000000016,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 1024,
+   "total_tokens": 16384,
+   "n_seqs": 16,
+   "bh": 128,
+   "backends": {
+    "wf": {
+     "wall_us": 149.44200217723846,
+     "k5k6_us": 103.70225,
+     "front_us": 39.92940000000004,
+     "kernel_sum_us": 143.63165000000004
+    },
+    "fly": {
+     "wall_us": 164.92199897766113,
+     "k5k6_us": 64.5657,
+     "front_us": 93.14215000000007,
+     "kernel_sum_us": 157.70785000000006,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 79.36099916696548,
+     "k5k6_us": 74.99190000000002,
+     "front_us": 0,
+     "kernel_sum_us": 74.99190000000002,
+     "variant": "bv32"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv32"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 1024,
+   "total_tokens": 32768,
+   "n_seqs": 32,
+   "bh": 256,
+   "backends": {
+    "wf": {
+     "wall_us": 203.92300188541412,
+     "k5k6_us": 115.15234999999996,
+     "front_us": 80.14989999999993,
+     "kernel_sum_us": 195.3022499999999
+    },
+    "fly": {
+     "wall_us": 302.88299918174744,
+     "k5k6_us": 144.55659999999997,
+     "front_us": 155.77490000000003,
+     "kernel_sum_us": 300.3315,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 108.80199819803238,
+     "k5k6_us": 101.83220000000003,
+     "front_us": 0,
+     "kernel_sum_us": 101.83220000000003,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 1024,
+   "total_tokens": 65536,
+   "n_seqs": 64,
+   "bh": 512,
+   "backends": {
+    "wf": {
+     "wall_us": 409.6849858760834,
+     "k5k6_us": 247.79190000000003,
+     "front_us": 156.13080000000002,
+     "kernel_sum_us": 403.9227000000001
+    },
+    "fly": {
+     "wall_us": 621.3279962539673,
+     "k5k6_us": 307.2386499999999,
+     "front_us": 312.3765999999997,
+     "kernel_sum_us": 619.6152499999996,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 217.08199381828308,
+     "k5k6_us": 207.77745,
+     "front_us": 0,
+     "kernel_sum_us": 207.77745,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 2048,
+   "total_tokens": 8192,
+   "n_seqs": 4,
+   "bh": 32,
+   "backends": {
+    "wf": {
+     "wall_us": 223.44200313091278,
+     "k5k6_us": 196.7613,
+     "front_us": 25.239299999999965,
+     "kernel_sum_us": 222.00059999999996
+    },
+    "fly": {
+     "wall_us": 157.96199440956116,
+     "k5k6_us": 102.6742,
+     "front_us": 50.005549999999985,
+     "kernel_sum_us": 152.67974999999998,
+     "variant": "bv32"
+    },
+    "flyfix": {
+     "wall_us": 94.56100314855576,
+     "k5k6_us": 89.87405,
+     "front_us": 0,
+     "kernel_sum_us": 89.87405,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 2048,
+   "total_tokens": 16384,
+   "n_seqs": 8,
+   "bh": 64,
+   "backends": {
+    "wf": {
+     "wall_us": 239.64299261569977,
+     "k5k6_us": 196.6673,
+     "front_us": 40.34345000000003,
+     "kernel_sum_us": 237.01075000000003
+    },
+    "fly": {
+     "wall_us": 229.60300743579865,
+     "k5k6_us": 134.98469999999998,
+     "front_us": 92.89399999999996,
+     "kernel_sum_us": 227.87869999999992,
+     "variant": "bv64"
+    },
+    "flyfix": {
+     "wall_us": 119.04200166463852,
+     "k5k6_us": 112.52235000000003,
+     "front_us": 0,
+     "kernel_sum_us": 112.52235000000003,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 2048,
+   "total_tokens": 32768,
+   "n_seqs": 16,
+   "bh": 128,
+   "backends": {
+    "wf": {
+     "wall_us": 288.24400901794434,
+     "k5k6_us": 203.92540000000002,
+     "front_us": 81.25595000000001,
+     "kernel_sum_us": 285.18135000000007
+    },
+    "fly": {
+     "wall_us": 297.5639998912811,
+     "k5k6_us": 139.30265000000003,
+     "front_us": 154.9828,
+     "kernel_sum_us": 294.28545,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 145.96199989318848,
+     "k5k6_us": 138.32665,
+     "front_us": 0,
+     "kernel_sum_us": 138.32665,
+     "variant": "bv32"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv32"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 2048,
+   "total_tokens": 65536,
+   "n_seqs": 32,
+   "bh": 256,
+   "backends": {
+    "wf": {
+     "wall_us": 398.5249996185303,
+     "k5k6_us": 239.1978000000001,
+     "front_us": 155.24685000000014,
+     "kernel_sum_us": 394.44465000000025
+    },
+    "fly": {
+     "wall_us": 612.2869849205017,
+     "k5k6_us": 298.3165,
+     "front_us": 312.56265,
+     "kernel_sum_us": 610.87915,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 210.76199412345886,
+     "k5k6_us": 200.48735000000002,
+     "front_us": 0,
+     "kernel_sum_us": 200.48735000000002,
+     "variant": "bv64"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv64"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 4096,
+   "total_tokens": 8192,
+   "n_seqs": 2,
+   "bh": 16,
+   "backends": {
+    "wf": {
+     "wall_us": 414.00501132011414,
+     "k5k6_us": 386.94350000000003,
+     "front_us": 25.56530000000011,
+     "kernel_sum_us": 412.5088000000001
+    },
+    "fly": {
+     "wall_us": 223.76200556755066,
+     "k5k6_us": 169.523,
+     "front_us": 51.04960000000004,
+     "kernel_sum_us": 220.57260000000002,
+     "variant": "bv16"
+    },
+    "flyfix": {
+     "wall_us": 173.0020046234131,
+     "k5k6_us": 170.911,
+     "front_us": 0,
+     "kernel_sum_us": 170.911,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 4096,
+   "total_tokens": 16384,
+   "n_seqs": 4,
+   "bh": 32,
+   "backends": {
+    "wf": {
+     "wall_us": 430.8449923992157,
+     "k5k6_us": 387.37099999999987,
+     "front_us": 41.317999999999934,
+     "kernel_sum_us": 428.6889999999998
+    },
+    "fly": {
+     "wall_us": 297.883003950119,
+     "k5k6_us": 200.96929999999995,
+     "front_us": 93.90009999999991,
+     "kernel_sum_us": 294.86939999999987,
+     "variant": "bv32"
+    },
+    "flyfix": {
+     "wall_us": 178.8019984960556,
+     "k5k6_us": 171.02499999999998,
+     "front_us": 0,
+     "kernel_sum_us": 171.02499999999998,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 4096,
+   "total_tokens": 32768,
+   "n_seqs": 8,
+   "bh": 64,
+   "backends": {
+    "wf": {
+     "wall_us": 479.0860116481781,
+     "k5k6_us": 393.6116,
+     "front_us": 82.17195000000005,
+     "kernel_sum_us": 475.78355000000005
+    },
+    "fly": {
+     "wall_us": 443.40500235557556,
+     "k5k6_us": 283.4642499999999,
+     "front_us": 156.58490000000018,
+     "kernel_sum_us": 440.04915000000005,
+     "variant": "bv64"
+    },
+    "flyfix": {
+     "wall_us": 225.40199756622314,
+     "k5k6_us": 212.15749999999997,
+     "front_us": 0,
+     "kernel_sum_us": 212.15749999999997,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 4096,
+   "total_tokens": 65536,
+   "n_seqs": 16,
+   "bh": 128,
+   "backends": {
+    "wf": {
+     "wall_us": 600.1269817352295,
+     "k5k6_us": 440.9419999999999,
+     "front_us": 156.92700000000013,
+     "kernel_sum_us": 597.869
+    },
+    "fly": {
+     "wall_us": 611.3669872283936,
+     "k5k6_us": 295.5404,
+     "front_us": 313.00474999999983,
+     "kernel_sum_us": 608.5451499999998,
+     "variant": "bv64w8"
+    },
+    "flyfix": {
+     "wall_us": 310.28398871421814,
+     "k5k6_us": 298.7145,
+     "front_us": 0,
+     "kernel_sum_us": 298.7145,
+     "variant": "bv32"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv32"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 8192,
+   "total_tokens": 8192,
+   "n_seqs": 1,
+   "bh": 8,
+   "backends": {
+    "wf": {
+     "wall_us": 794.9690222740173,
+     "k5k6_us": 767.0639999999999,
+     "front_us": 25.81529999999998,
+     "kernel_sum_us": 792.8792999999998
+    },
+    "fly": {
+     "wall_us": 386.4850103855133,
+     "k5k6_us": 333.08489999999995,
+     "front_us": 52.97159999999988,
+     "kernel_sum_us": 386.05649999999986,
+     "variant": "bv16"
+    },
+    "flyfix": {
+     "wall_us": 337.6840054988861,
+     "k5k6_us": 335.9469499999999,
+     "front_us": 0,
+     "kernel_sum_us": 335.9469499999999,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 8192,
+   "total_tokens": 16384,
+   "n_seqs": 2,
+   "bh": 16,
+   "backends": {
+    "wf": {
+     "wall_us": 813.6900067329407,
+     "k5k6_us": 769.3199999999999,
+     "front_us": 42.0514500000002,
+     "kernel_sum_us": 811.3714500000001
+    },
+    "fly": {
+     "wall_us": 429.96498942375183,
+     "k5k6_us": 332.47665,
+     "front_us": 93.57829999999977,
+     "kernel_sum_us": 426.0549499999998,
+     "variant": "bv16"
+    },
+    "flyfix": {
+     "wall_us": 339.2840027809143,
+     "k5k6_us": 336.2749499999999,
+     "front_us": 0,
+     "kernel_sum_us": 336.2749499999999,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 8192,
+   "total_tokens": 32768,
+   "n_seqs": 4,
+   "bh": 32,
+   "backends": {
+    "wf": {
+     "wall_us": 857.729971408844,
+     "k5k6_us": 770.534,
+     "front_us": 83.66594999999982,
+     "kernel_sum_us": 854.1999499999998
+    },
+    "fly": {
+     "wall_us": 605.7279706001282,
+     "k5k6_us": 442.23999999999995,
+     "front_us": 157.98700000000005,
+     "kernel_sum_us": 600.227,
+     "variant": "bv32"
+    },
+    "flyfix": {
+     "wall_us": 342.9639935493469,
+     "k5k6_us": 338.65695,
+     "front_us": 0,
+     "kernel_sum_us": 338.65695,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  },
+  {
+   "tp": 8,
+   "H": 8,
+   "Hg": 2,
+   "seqlen": 8192,
+   "total_tokens": 65536,
+   "n_seqs": 8,
+   "bh": 64,
+   "backends": {
+    "wf": {
+     "wall_us": 1014.6119594573975,
+     "k5k6_us": 852.61695,
+     "front_us": 159.85489999999976,
+     "kernel_sum_us": 1012.4718499999997
+    },
+    "fly": {
+     "wall_us": 898.9710211753845,
+     "k5k6_us": 581.8136999999999,
+     "front_us": 314.9528000000002,
+     "kernel_sum_us": 896.7665000000002,
+     "variant": "bv64"
+    },
+    "flyfix": {
+     "wall_us": 492.72599816322327,
+     "k5k6_us": 488.22069999999997,
+     "front_us": 0,
+     "kernel_sum_us": 488.22069999999997,
+     "variant": "bv16"
+    }
+   },
+   "errors": {},
+   "cu_scaled_variant": "bv16"
+  }
+ ]
+}

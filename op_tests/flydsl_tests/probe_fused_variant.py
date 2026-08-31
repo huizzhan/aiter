@@ -22,27 +22,19 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench_gdn_block_ws_vs_flydsl as B
 
+import sweep_k5k6_compare as S
+
 VARIANTS = ("bv16", "bv32", "bv64", "bv64w8")
-CU = 80
 
 
-def fused_callable(t, variant, hg, h):
-    from aiter.ops.flydsl.linear_attention_prefill_kernels import (
+def fused_callable(t, variant, hg, h, front):
+    from aiter.ops.flydsl.gdn_fused_gfx942_kernels import (
         chunk_gated_delta_rule_fwd_h_o_flydsl,
-        gdn_prepare_fwd_flydsl,
     )
 
     # K1..K4 once, outside the timed region: this probe is about the K5+K6
     # instance choice, and the prepare stage is identical across variants.
-    w, u, g_cumsum = gdn_prepare_fwd_flydsl(
-        k=t["k"],
-        v=t["v"],
-        g=t["g"],
-        beta=t["beta"],
-        cu_seqlens=t["cu"],
-        use_exp2=True,
-        prefill_metadata=t["meta"],
-    )
+    w, u, g_cumsum = S._prepare_outputs(t, front)
     o = t["v"].new_empty(t["v"].shape)
 
     def run():
@@ -64,10 +56,33 @@ def fused_callable(t, variant, hg, h):
 
 
 def main() -> int:
-    from aiter.ops.flydsl.kernels.chunk_gated_delta_h_gfx942 import (
-        select_fused_variant,
-    )
+    import argparse
 
+    from aiter.ops.flydsl.gdn_fused_gfx942_kernels import _fused_bv_for_shape
+    from aiter.ops.flydsl.linear_attention_prefill_kernels import _device_cu_count
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--out", default=str(Path(__file__).with_name("fused_variant_probe.json"))
+    )
+    ap.add_argument("--front", choices=("auto", "flydsl", "triton"), default="auto")
+    args = ap.parse_args()
+
+    front = args.front
+    if front == "auto":
+        try:
+            import flydsl.expr.gpu as _fx_gpu
+
+            front = "flydsl" if hasattr(_fx_gpu, "shuffle") else "triton"
+        except ImportError:
+            front = "triton"
+
+    def auto_variant(h: int, n: int) -> str:
+        """The tag the wrapper's own selector resolves to for this shape."""
+        bv, waves = _fused_bv_for_shape(H=h, V=128, N=n, variant=None)
+        return f"bv{bv}" + ("w8" if waves == 8 else "")
+
+    cus = _device_cu_count()
     rows = []
     # seqlen fixed: B*H is the only variable that moved the grid results, and
     # holding the chain length constant keeps the columns comparable.
@@ -78,7 +93,7 @@ def main() -> int:
         B.FULL_PROMPT_LEN = seqlen
         t = B.build_inputs(n_seqs)
         bh = h * n_seqs
-        auto = select_fused_variant(H=h, N=n_seqs, V=128)
+        auto = auto_variant(h, n_seqs)
 
         row = {
             "tp": tp,
@@ -94,7 +109,7 @@ def main() -> int:
             bv = int(v.replace("w8", "")[2:])
             row["ctas"][v] = -(-128 // bv) * bh
             try:
-                run = fused_callable(t, v, hg, h)
+                run = fused_callable(t, v, hg, h, front)
                 run()
                 torch.cuda.synchronize()
                 row["times"][v] = B.bench_wall_us(run)
@@ -118,9 +133,11 @@ def main() -> int:
         del t
         torch.cuda.empty_cache()
 
-    out = Path(__file__).with_name("fused_variant_probe.json")
+    out = Path(args.out)
     with open(out, "w") as fh:
-        json.dump({"cus": CU, "seqlen": seqlen, "rows": rows}, fh, indent=1)
+        json.dump(
+            {"cus": cus, "front": front, "seqlen": seqlen, "rows": rows}, fh, indent=1
+        )
     print(f"\nwrote {out}")
     return 0
 

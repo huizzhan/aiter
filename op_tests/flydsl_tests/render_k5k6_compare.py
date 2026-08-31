@@ -58,10 +58,34 @@ def mix(a: str, b: str, t: float) -> str:
 
 
 def geo(vals: list[float]) -> float:
+    if not vals:
+        return float("nan")
     p = 1.0
     for v in vals:
         p *= v
     return p ** (1 / len(vals))
+
+
+def by_bh(cells: list[dict], col: str) -> dict[int, float]:
+    """geomean(opus / FlyDSL) per B*H, which is the axis that moves results."""
+    g = collections.defaultdict(list)
+    for c in cells:
+        g[c["bh"]].append(
+            c["backends"]["wf"]["k5k6_us"] / c["backends"][col]["k5k6_us"]
+        )
+    return {bh: geo(v) for bh, v in sorted(g.items())}
+
+
+def crossover(cells: list[dict], col: str) -> tuple[int | None, int | None]:
+    """The last B*H FlyDSL wins and the first one opus wins.
+
+    Read off the per-B*H geomeans rather than hardcoded, because the boundary
+    tracks the CU count and so moves between parts.
+    """
+    g = by_bh(cells, col)
+    fly = [bh for bh, r in g.items() if r > 1]
+    opus = [bh for bh, r in g.items() if r <= 1]
+    return (max(fly) if fly else None), (min(opus) if opus else None)
 
 
 def cell_html(cell: dict | None, col: str) -> str:
@@ -287,6 +311,73 @@ def main() -> int:
         for c in cells
         if c["backends"]["fly"].get("variant") != c["cu_scaled_variant"]
     ]
+    n = len(cells)
+    gfx = d["gfx"].split(":")[0]
+    front = d.get("front", "flydsl")
+    fly_win, opus_win = crossover(cells, "flyfix")
+
+    # The kernel and its tests are gated to gfx942 upstream, so a run on any
+    # other part had that gate lifted and is reporting what the kernel does
+    # there, not what the PR ships there.
+    caveats = []
+    if gfx != "gfx942":
+        caveats.append(
+            f"<b>融合 kernel 上游限定 gfx942。</b>PR #4884 的融合 K5+K6 "
+            f"（<code>gdn_fused_gfx942_kernels.py</code>）对非 gfx942 直接拒绝，"
+            f"自带的单元测试也整套 skip。本页是<b>放开 arch 门控之后</b>在 {gfx} 上测的，"
+            f"测之前先把 PR 那 114 个融合用例在本卡跑过一遍（113 passed / 1 skipped，"
+            f"含 bv16/32/64/bv64w8 各变体、非 BT 倍数尾块、tail-mask 的 Inf/NaN 隔离、"
+            f"final_state 一致性）。"
+        )
+    else:
+        caveats.append(
+            f"<b>FlyDSL 列是强制打开的。</b>PR #4884 把 VK 路径门控在 "
+            f"<code>_device_cu_count() &gt;= 304</code>，本机 {d['cus']} CU，"
+            f"<code>fusion=AUTO</code> 不会融合；这里用 <code>fusion=ALWAYS</code>。"
+        )
+    if front == "triton":
+        caveats.append(
+            "<b>前端是 Triton 而非 FlyDSL。</b>FlyDSL 的 "
+            "<code>gdn_prepare</code> 需要 <code>flydsl.expr.gpu.shuffle</code>，"
+            "本机装的 flydsl 0.2.4 没有这个符号。融合 K5+K6 本身不用 shuffle，"
+            "所以 K5+K6 那一列不受影响；<b>wall 一列</b>两边前端不同，只能参考。"
+        )
+    if bad:
+        loss = geo(
+            [
+                c["backends"]["fly"]["k5k6_us"] / c["backends"]["flyfix"]["k5k6_us"]
+                for c in bad
+            ]
+        )
+        caveats.append(
+            f"<b>auto 的变体选择在这张卡上不是最优。</b>{len(bad)}/{n} 格里 "
+            f"auto 选的 BV 与变体探针（<code>probe_fused_variant.py</code>）在本卡"
+            f"实测最优的那个不同，平均慢 <b>{loss:.2f}x</b>。"
+            f"右侧「按 CU 缩放的变体」列是换成实测规则之后的结果。"
+        )
+    else:
+        caveats.append(
+            f"<b>auto 的变体选择在这张卡上是对的。</b>{n}/{n} 格里 auto 选的 BV "
+            f"与按 {d['cus']} CU 缩放的选择一致。"
+        )
+
+    bhs = sorted({c["bh"] for c in cells})
+    if fly_win and opus_win:
+        bound = (
+            f"<b>B·H ≤ {fly_win} 时 FlyDSL 融合 kernel 更快</b>，"
+            f"<b>B·H ≥ {opus_win} 时 opus WF 更快</b>。两边都是同一个机理——"
+            f"融合 kernel 在 B·H 小的时候喂不饱设备，谁的退化更缓谁就赢"
+        )
+    elif fly_win:
+        bound = (
+            f"<b>网格覆盖的全部 B·H（{bhs[0]}..{bhs[-1]}）上 FlyDSL 融合 kernel 都更快</b>，"
+            f"没有出现翻转点"
+        )
+    else:
+        bound = (
+            f"<b>网格覆盖的全部 B·H（{bhs[0]}..{bhs[-1]}）上 opus WF 都更快</b>，"
+            f"没有出现翻转点"
+        )
 
     body = f"""<h1>GDN prefill 融合 K5+K6：opus WF vs FlyDSL VK (PR #4884)</h1>
 <p class="sub1">{d["device"]} · {d["gfx"]} · {d["cus"]} CU · bf16 · K=V=128 · BT=64 ·
@@ -295,15 +386,7 @@ GQA {d["gqa_ratio"]}（Hk={d["Hk_model"]} / Hv={d["Hv_model"]}）· packed varle
 每格 {d["num_iters"]} 次取中位、profiler {d["prof_iters"]} 次取 device time</p>
 
 <div class="warn">
-<b>这台卡不是 PR 的目标卡。</b>PR #4884 把 FlyDSL VK 路径门控在
-<code>_device_cu_count() &gt;= 304</code>（MI300X/MI325X），本机 {d["cus"]} CU，
-所以 <code>fusion=AUTO</code> 在这里<b>永远不会融合</b>——FlyDSL 列是用
-<code>fusion=ALWAYS</code> 强制打开的。更要紧的是变体选择规则
-<code>_hn_variant</code> 用的是绝对阈值（<code>H·N≤32→bv16</code>、
-<code>≤80→bv32</code>），不含 CU 项：在 304 CU 上这些阈值对应约一个 CTA wave，
-在 80 CU 上却要求最多 3.2 个 wave。{len(bad)}/64 格因此选小了 BV，
-平均损失 <b>{geo([c["backends"]["fly"]["k5k6_us"] / c["backends"]["flyfix"]["k5k6_us"] for c in bad]):.2f}x</b>。
-右侧「按 CU 缩放的变体」列就是把这一项修掉之后的结果。
+{"<p>" + "</p><p>".join(caveats) + "</p>"}
 </div>
 
 <h2>按 B·H 汇总</h2>
@@ -311,11 +394,9 @@ GQA {d["gqa_ratio"]}（Hk={d["Hk_model"]} / Hv={d["Hv_model"]}）· packed varle
 都只通过它起作用。CTA/CU 是 as-shipped 变体的实际网格占用
 <code>⌈V/BV⌉·B·H / {d["cus"]}</code>，超过 1 就是排队。</p>
 {summary_table(d)}
-<p class="note">分界干净：<b>B·H ≤ 32 时 FlyDSL 融合 kernel 更快</b>（修正变体后 1.6–2.4x），
-<b>B·H ≥ 64 时 opus WF 更快</b>（1.07–1.28x）。as-shipped 的曲线在 B·H=32/64 处塌陷，
-是变体选错、不是 kernel 本身慢。</p>
+<p class="note">按实测最优变体（右侧列）看：{bound}。</p>
 
-<h2>完整 64 格网格</h2>
+<h2>完整 {n} 格网格</h2>
 <p class="sub1">同一个 B·H 的格子彼此吻合到 2% 以内，即便 token 总量差 8 倍
 ——这正是「只有 B·H 起作用」的验证。悬停看每格明细。</p>
 <div class="tabs">
@@ -327,16 +408,16 @@ GQA {d["gqa_ratio"]}（Hk={d["Hk_model"]} / Hv={d["Hv_model"]}）· packed varle
 
 <h2>整块 pipeline 的 wall</h2>
 <p class="sub1">K5+K6 之外两条 pipeline 的前端也不同：opus 把 K1..K4 融进一个 HIP
-kernel（<code>gdn_k1_neumann_kernel</code>），FlyDSL 融进
-<code>gdn_prepare_kernel</code>，后者快
-{geo([c["backends"]["wf"]["front_us"] / c["backends"]["fly"]["front_us"] for c in cells]):.2f}x，
-部分抵消了 K5+K6 的差距。</p>
+kernel（<code>gdn_k1_neumann_kernel</code>），FlyDSL 这边是
+{"Triton prepare 三件套" if front == "triton" else "<code>gdn_prepare_kernel</code>"}，
+两者之比 geomean =
+{geo([c["backends"]["wf"]["front_us"] / c["backends"]["fly"]["front_us"] for c in cells]):.2f}x。</p>
 <p class="note">as-shipped 全 pipeline：geomean(opus/FlyDSL) =
 <b>{geo([c["backends"]["wf"]["wall_us"] / c["backends"]["fly"]["wall_us"] for c in cells]):.3f}</b>，
-FlyDSL 赢 <b>{sum(1 for c in cells if c["backends"]["wf"]["wall_us"] > c["backends"]["fly"]["wall_us"])}</b>/64 格。
+FlyDSL 赢 <b>{sum(1 for c in cells if c["backends"]["wf"]["wall_us"] > c["backends"]["fly"]["wall_us"])}</b>/{n} 格。
 K5+K6 单看是 geomean <b>{geo(r_auto):.3f}</b>（修正变体后 <b>{geo(r_fix):.3f}</b>）。</p>
 
-<p class="foot">数据 <code>k5k6_compare.json</code> ·
+<p class="foot">数据 <code>{Path(args.json).name}</code> ·
 复现 <code>python sweep_k5k6_compare.py</code> ·
 变体探针 <code>python probe_fused_variant.py</code> ·
 torch {d["torch"]}</p>

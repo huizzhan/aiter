@@ -1,0 +1,1633 @@
+<!doctype html><html lang=zh-CN><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>GDN 融合 K5+K6：opus WF vs FlyDSL VK</title><style>
+:root{--ink:#111827;--dim:#6b7280;--line:#e5e7eb;--bgc:#f9fafb}
+*{box-sizing:border-box}
+body{margin:0;padding:34px 30px 60px;background:#fff;color:var(--ink);
+ font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",
+ "PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+h1{font-size:21px;margin:0 0 6px;letter-spacing:-.2px}
+h2{font-size:16px;margin:38px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+.sub1{color:var(--dim);font-size:13px;margin:0 0 4px}
+.warn{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;
+ padding:11px 14px;margin:16px 0 4px;font-size:13px;color:#78350f}
+.warn b{color:#92400e}
+table{border-collapse:separate;border-spacing:2px;margin:12px 0 4px}
+th,td{padding:5px 7px;font-size:12.5px;text-align:center;white-space:nowrap}
+thead th{color:var(--dim);font-weight:600;font-size:11.5px;letter-spacing:.3px}
+thead th.span{background:var(--bgc);border-radius:6px;color:var(--ink)}
+.u{font-weight:500;font-size:11px}
+.rh{background:var(--bgc);border-radius:5px;font-weight:600;min-width:40px}
+.rh.sub{color:var(--dim);font-weight:500}
+tr.grp td,tr.grp th{border-top:2px solid #d1d5db}
+.cell{background:var(--bg);border:1px solid var(--bd);border-radius:6px;
+ color:var(--fg);cursor:default;min-width:96px}
+.cell .pill{font-weight:650;font-size:11.5px}
+.cell .num{display:block;font-size:11px;opacity:.72;font-variant-numeric:tabular-nums}
+.empty{color:#d1d5db;background:#fcfcfd;border:1px dashed var(--line);border-radius:6px}
+.sum th{background:var(--bgc);border-radius:5px}
+.sum tbody th{font-weight:650;min-width:52px}
+.sum td{background:#fcfcfd;border:1px solid var(--line);border-radius:5px;
+ font-variant-numeric:tabular-nums}
+.sum code{font:11.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+ background:#f3f4f6;padding:2px 4px;border-radius:3px}
+.sum td.flip code{background:#fef3c7;color:#92400e;font-weight:600}
+.wfly{background:#f5f3ff!important;border-color:#ddd6fe!important;
+ color:#5b21b6;font-weight:650}
+.wopus{background:#fdf2f8!important;border-color:#fbcfe8!important;
+ color:#9d174d;font-weight:650}
+.note{color:var(--dim);font-size:12.5px;margin:6px 0 0}
+.tabs{display:flex;gap:6px;margin:14px 0 0}
+.tabs button{font:inherit;font-size:12.5px;padding:5px 13px;border-radius:6px;
+ border:1px solid var(--line);background:#fff;color:var(--dim);cursor:pointer}
+.tabs button.on{background:var(--ink);border-color:var(--ink);color:#fff;font-weight:600}
+#tip{position:fixed;z-index:9;display:none;pointer-events:none;max-width:430px;
+ background:#111827f2;color:#f9fafb;padding:9px 12px;border-radius:7px;
+ font:11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre}
+.foot{color:var(--dim);font-size:12px;margin-top:34px;padding-top:14px;
+ border-top:1px solid var(--line)}
+</style></head><body><h1>GDN prefill 融合 K5+K6：opus WF vs FlyDSL VK (PR #4884)</h1>
+<p class="sub1">AMD Radeon Graphics · gfx950:sramecc+:xnack- · 256 CU · bf16 · K=V=128 · BT=64 ·
+GQA 4（Hk=16 / Hv=64）· packed varlen ·
+两侧都是 <code>output_final_state=True</code> + 真实 initial_state ·
+每格 50 次取中位、profiler 20 次取 device time</p>
+
+<div class="warn">
+<p><b>融合 kernel 上游限定 gfx942。</b>PR #4884 的融合 K5+K6 （<code>gdn_fused_gfx942_kernels.py</code>）对非 gfx942 直接拒绝，自带的单元测试也整套 skip。本页是<b>放开 arch 门控之后</b>在 gfx950 上测的，测之前先把 PR 那 114 个融合用例在本卡跑过一遍（113 passed / 1 skipped，含 bv16/32/64/bv64w8 各变体、非 BT 倍数尾块、tail-mask 的 Inf/NaN 隔离、final_state 一致性）。</p><p><b>前端是 Triton 而非 FlyDSL。</b>FlyDSL 的 <code>gdn_prepare</code> 需要 <code>flydsl.expr.gpu.shuffle</code>，本机装的 flydsl 0.2.4 没有这个符号。融合 K5+K6 本身不用 shuffle，所以 K5+K6 那一列不受影响；<b>wall 一列</b>两边前端不同，只能参考。</p><p><b>auto 的变体选择在这张卡上不是最优。</b>60/64 格里 auto 选的 BV 与变体探针（<code>probe_fused_variant.py</code>）在本卡实测最优的那个不同，平均慢 <b>1.27x</b>。右侧「按 CU 缩放的变体」列是换成实测规则之后的结果。</p>
+</div>
+
+<h2>按 B·H 汇总</h2>
+<p class="sub1">B·H（序列数 × 每卡 value head 数）是唯一移动结果的变量：TP、seqlen、T
+都只通过它起作用。CTA/CU 是 as-shipped 变体的实际网格占用
+<code>⌈V/BV⌉·B·H / 256</code>，超过 1 就是排队。</p>
+<table class="sum"><thead><tr><th rowspan="2">B·H</th><th rowspan="2">格数</th><th rowspan="2">opus WF<br><span class="u">中位 µs</span></th><th colspan="4">FlyDSL as-shipped（auto 选变体）</th><th colspan="3">FlyDSL 换成按 CU 缩放的变体</th></tr><tr><th class="u">中位 µs</th><th class="u">变体</th><th class="u">CTA/CU</th><th class="u">对比</th><th class="u">中位 µs</th><th class="u">变体</th><th class="u">对比</th></tr></thead><tbody><tr><th>8</th><td>1</td><td>767</td><td>333</td><td><code>bv16</code></td><td>0.2×</td><td class="wfly">FlyDSL 2.30x</td><td>336</td><td><code>bv16</code></td><td class="wfly">FlyDSL 2.28x</td></tr><tr><th>16</th><td>3</td><td>767</td><td>331</td><td><code>bv16</code></td><td>0.5×</td><td class="wfly">FlyDSL 2.30x</td><td>335</td><td><code>bv16</code></td><td class="wfly">FlyDSL 2.28x</td></tr><tr><th>32</th><td>6</td><td>574</td><td>322</td><td><code>bv32</code></td><td>0.5×</td><td class="wfly">FlyDSL 1.80x</td><td>254</td><td class="flip"><code>bv16</code></td><td class="wfly">FlyDSL 2.25x</td></tr><tr><th>64</th><td>10</td><td>390</td><td>289</td><td><code>bv64</code></td><td>0.5×</td><td class="wfly">FlyDSL 1.42x</td><td>212</td><td class="flip"><code>bv16</code></td><td class="wfly">FlyDSL 1.78x</td></tr><tr><th>128</th><td>12</td><td>442</td><td>295</td><td><code>bv64w8</code></td><td>1.0×</td><td class="wfly">FlyDSL 1.52x</td><td>298</td><td class="flip"><code>bv32</code></td><td class="wfly">FlyDSL 1.48x</td></tr><tr><th>256</th><td>12</td><td>250</td><td>301</td><td><code>bv64w8</code></td><td>2.0×</td><td class="wopus">opus 1.21x</td><td>204</td><td class="flip"><code>bv64</code></td><td class="wfly">FlyDSL 1.19x</td></tr><tr><th>512</th><td>10</td><td>493</td><td>599</td><td><code>bv64w8</code></td><td>4.0×</td><td class="wopus">opus 1.18x</td><td>394</td><td class="flip"><code>bv64</code></td><td class="wfly">FlyDSL 1.21x</td></tr><tr><th>1024</th><td>6</td><td>777</td><td>904</td><td><code>bv64w8</code></td><td>8.0×</td><td class="wopus">opus 1.18x</td><td>662</td><td class="flip"><code>bv64</code></td><td class="wfly">FlyDSL 1.19x</td></tr><tr><th>2048</th><td>3</td><td>1087</td><td>1225</td><td><code>bv64w8</code></td><td>16.0×</td><td class="wopus">opus 1.12x</td><td>932</td><td class="flip"><code>bv64</code></td><td class="wfly">FlyDSL 1.16x</td></tr><tr><th>4096</th><td>1</td><td>2175</td><td>2419</td><td><code>bv64w8</code></td><td>32.0×</td><td class="wopus">opus 1.11x</td><td>1885</td><td class="flip"><code>bv64</code></td><td class="wfly">FlyDSL 1.15x</td></tr></tbody></table>
+<p class="note">按实测最优变体（右侧列）看：<b>网格覆盖的全部 B·H（8..4096）上 FlyDSL 融合 kernel 都更快</b>，没有出现翻转点。</p>
+
+<h2>完整 64 格网格</h2>
+<p class="sub1">同一个 B·H 的格子彼此吻合到 2% 以内，即便 token 总量差 8 倍
+——这正是「只有 B·H 起作用」的验证。悬停看每格明细。</p>
+<div class="tabs">
+ <button class="on" data-pane="fly">as-shipped（auto 选变体）</button>
+ <button data-pane="flyfix">按 CU 缩放的变体</button>
+</div>
+<div data-pane="fly"><table class="grid"><thead><tr><th class="rh" rowspan="2">TP</th><th class="rh sub" rowspan="2">H</th><th class="rh sub" rowspan="2">Hg</th><th class="rh" rowspan="2">seqlen</th><th class="span" colspan="4">T = 总 token 数（B = T / seqlen）</th></tr><tr><th>8K</th><th>16K</th><th>32K</th><th>64K</th></tr></thead><tbody><tr class=""><th class="rh">1</th><th class="rh sub">64</th><th class="rh sub">16</th><th class="rh">1K</th><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=8
+seqlen=1,024 × B=8  ⇒  T=8,192
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     255.1 us   gdn_k2_kernel
+  FlyDSL      303.4 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.19x
+
+整块 pipeline wall:
+  opus WF     437.6 us  (K1..K4 179.4 us)
+  FlyDSL      674.2 us  (K1..K4 366.2 us)" data-bh="512" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.19x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=16
+seqlen=1,024 × B=16  ⇒  T=16,384
+B·H=1024
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     499.9 us   gdn_k2_kernel
+  FlyDSL      615.6 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.23x
+
+整块 pipeline wall:
+  opus WF     850.2 us  (K1..K4 348.1 us)
+  FlyDSL       1.34 ms  (K1..K4 720.0 us)" data-bh="1024" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.23x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=32
+seqlen=1,024 × B=32  ⇒  T=32,768
+B·H=2048
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.07 ms   gdn_k2_kernel
+  FlyDSL       1.21 ms   bv 变体 bv64w8
+  ⇒ opus WF 快 1.13x
+
+整块 pipeline wall:
+  opus WF      1.82 ms  (K1..K4 738.8 us)
+  FlyDSL       2.64 ms  (K1..K4 1.44 ms)" data-bh="2048" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.13x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=64
+seqlen=1,024 × B=64  ⇒  T=65,536
+B·H=4096
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      2.18 ms   gdn_k2_kernel
+  FlyDSL       2.42 ms   bv 变体 bv64w8
+  ⇒ opus WF 快 1.11x
+
+整块 pipeline wall:
+  opus WF      3.67 ms  (K1..K4 1.48 ms)
+  FlyDSL       5.30 ms  (K1..K4 2.89 ms)" data-bh="4096" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.11x</span></td></tr><tr class=""><th class="rh">1</th><th class="rh sub">64</th><th class="rh sub">16</th><th class="rh">2K</th><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=4
+seqlen=2,048 × B=4  ⇒  T=8,192
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     253.0 us   gdn_k2_kernel
+  FlyDSL      298.6 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.18x
+
+整块 pipeline wall:
+  opus WF     445.6 us  (K1..K4 179.7 us)
+  FlyDSL      667.6 us  (K1..K4 367.3 us)" data-bh="256" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.18x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=8
+seqlen=2,048 × B=8  ⇒  T=16,384
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     514.6 us   gdn_k2_kernel
+  FlyDSL      591.0 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.15x
+
+整块 pipeline wall:
+  opus WF     845.5 us  (K1..K4 357.9 us)
+  FlyDSL       1.32 ms  (K1..K4 721.9 us)" data-bh="512" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.15x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=16
+seqlen=2,048 × B=16  ⇒  T=32,768
+B·H=1024
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.05 ms   gdn_k2_kernel
+  FlyDSL       1.18 ms   bv 变体 bv64w8
+  ⇒ opus WF 快 1.13x
+
+整块 pipeline wall:
+  opus WF      1.80 ms  (K1..K4 742.0 us)
+  FlyDSL       2.61 ms  (K1..K4 1.44 ms)" data-bh="1024" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.13x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=32
+seqlen=2,048 × B=32  ⇒  T=65,536
+B·H=2048
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      2.13 ms   gdn_k2_kernel
+  FlyDSL       2.37 ms   bv 变体 bv64w8
+  ⇒ opus WF 快 1.11x
+
+整块 pipeline wall:
+  opus WF      3.62 ms  (K1..K4 1.48 ms)
+  FlyDSL       5.27 ms  (K1..K4 2.89 ms)" data-bh="2048" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.11x</span></td></tr><tr class=""><th class="rh">1</th><th class="rh sub">64</th><th class="rh sub">16</th><th class="rh">4K</th><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=2
+seqlen=4,096 × B=2  ⇒  T=8,192
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     460.4 us   gdn_k2_kernel
+  FlyDSL      298.6 us   bv 变体 bv64w8
+  ⇒ FlyDSL 快 1.54x
+
+整块 pipeline wall:
+  opus WF     644.9 us  (K1..K4 179.7 us)
+  FlyDSL      668.9 us  (K1..K4 367.8 us)" data-bh="128" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.54x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=4
+seqlen=4,096 × B=4  ⇒  T=16,384
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     486.5 us   gdn_k2_kernel
+  FlyDSL      583.0 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.20x
+
+整块 pipeline wall:
+  opus WF     829.9 us  (K1..K4 341.8 us)
+  FlyDSL       1.30 ms  (K1..K4 720.1 us)" data-bh="256" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.20x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=8
+seqlen=4,096 × B=8  ⇒  T=32,768
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.03 ms   gdn_k2_kernel
+  FlyDSL       1.17 ms   bv 变体 bv64w8
+  ⇒ opus WF 快 1.13x
+
+整块 pipeline wall:
+  opus WF      1.79 ms  (K1..K4 742.3 us)
+  FlyDSL       2.60 ms  (K1..K4 1.45 ms)" data-bh="512" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.13x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=16
+seqlen=4,096 × B=16  ⇒  T=65,536
+B·H=1024
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      2.09 ms   gdn_k2_kernel
+  FlyDSL       2.33 ms   bv 变体 bv64w8
+  ⇒ opus WF 快 1.12x
+
+整块 pipeline wall:
+  opus WF      3.33 ms  (K1..K4 1.48 ms)
+  FlyDSL       5.23 ms  (K1..K4 2.90 ms)" data-bh="1024" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.12x</span></td></tr><tr class=""><th class="rh">1</th><th class="rh sub">64</th><th class="rh sub">16</th><th class="rh">8K</th><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=1
+seqlen=8,192 × B=1  ⇒  T=8,192
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     884.3 us   gdn_k2_kernel
+  FlyDSL      586.6 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.51x
+
+整块 pipeline wall:
+  opus WF      1.07 ms  (K1..K4 183.0 us)
+  FlyDSL      957.9 us  (K1..K4 369.2 us)" data-bh="64" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.51x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=2
+seqlen=8,192 × B=2  ⇒  T=16,384
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     902.6 us   gdn_k2_kernel
+  FlyDSL      576.7 us   bv 变体 bv64w8
+  ⇒ FlyDSL 快 1.57x
+
+整块 pipeline wall:
+  opus WF      1.25 ms  (K1..K4 343.3 us)
+  FlyDSL       1.30 ms  (K1..K4 724.5 us)" data-bh="128" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.57x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=4
+seqlen=8,192 × B=4  ⇒  T=32,768
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.03 ms   gdn_k2_kernel
+  FlyDSL       1.16 ms   bv 变体 bv64w8
+  ⇒ opus WF 快 1.13x
+
+整块 pipeline wall:
+  opus WF      1.77 ms  (K1..K4 743.0 us)
+  FlyDSL       2.60 ms  (K1..K4 1.45 ms)" data-bh="256" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.13x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=8
+seqlen=8,192 × B=8  ⇒  T=65,536
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      2.08 ms   gdn_k2_kernel
+  FlyDSL       2.31 ms   bv 变体 bv64w8
+  ⇒ opus WF 快 1.11x
+
+整块 pipeline wall:
+  opus WF      3.58 ms  (K1..K4 1.48 ms)
+  FlyDSL       5.20 ms  (K1..K4 2.90 ms)" data-bh="512" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.11x</span></td></tr><tr class="grp"><th class="rh">2</th><th class="rh sub">32</th><th class="rh sub">8</th><th class="rh">1K</th><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=8
+seqlen=1,024 × B=8  ⇒  T=8,192
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     122.5 us   gdn_k2_kernel
+  FlyDSL      145.2 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.19x
+
+整块 pipeline wall:
+  opus WF     226.8 us  (K1..K4 91.2 us)
+  FlyDSL      321.8 us  (K1..K4 169.6 us)" data-bh="256" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.19x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=16
+seqlen=1,024 × B=16  ⇒  T=16,384
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     256.5 us   gdn_k2_kernel
+  FlyDSL      302.6 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.18x
+
+整块 pipeline wall:
+  opus WF     439.0 us  (K1..K4 178.8 us)
+  FlyDSL      654.2 us  (K1..K4 349.1 us)" data-bh="512" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.18x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=32
+seqlen=1,024 × B=32  ⇒  T=32,768
+B·H=1024
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     506.1 us   gdn_k2_kernel
+  FlyDSL      624.5 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.23x
+
+整块 pipeline wall:
+  opus WF     844.2 us  (K1..K4 336.7 us)
+  FlyDSL       1.33 ms  (K1..K4 700.0 us)" data-bh="1024" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.23x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=64
+seqlen=1,024 × B=64  ⇒  T=65,536
+B·H=2048
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.09 ms   gdn_k2_kernel
+  FlyDSL       1.23 ms   bv 变体 bv64w8
+  ⇒ opus WF 快 1.13x
+
+整块 pipeline wall:
+  opus WF      1.83 ms  (K1..K4 723.1 us)
+  FlyDSL       2.63 ms  (K1..K4 1.42 ms)" data-bh="2048" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.13x</span></td></tr><tr class=""><th class="rh">2</th><th class="rh sub">32</th><th class="rh sub">8</th><th class="rh">2K</th><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=4
+seqlen=2,048 × B=4  ⇒  T=8,192
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     204.9 us   gdn_k2_kernel
+  FlyDSL      143.1 us   bv 变体 bv64w8
+  ⇒ FlyDSL 快 1.43x
+
+整块 pipeline wall:
+  opus WF     308.7 us  (K1..K4 91.0 us)
+  FlyDSL      316.6 us  (K1..K4 170.0 us)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.43x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=8
+seqlen=2,048 × B=8  ⇒  T=16,384
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     246.5 us   gdn_k2_kernel
+  FlyDSL      300.5 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.22x
+
+整块 pipeline wall:
+  opus WF     429.2 us  (K1..K4 181.1 us)
+  FlyDSL      650.6 us  (K1..K4 349.1 us)" data-bh="256" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.22x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=16
+seqlen=2,048 × B=16  ⇒  T=32,768
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     490.7 us   gdn_k2_kernel
+  FlyDSL      606.2 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.24x
+
+整块 pipeline wall:
+  opus WF     826.6 us  (K1..K4 337.5 us)
+  FlyDSL       1.31 ms  (K1..K4 700.3 us)" data-bh="512" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.24x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=32
+seqlen=2,048 × B=32  ⇒  T=65,536
+B·H=1024
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.06 ms   gdn_k2_kernel
+  FlyDSL       1.19 ms   bv 变体 bv64w8
+  ⇒ opus WF 快 1.13x
+
+整块 pipeline wall:
+  opus WF      1.79 ms  (K1..K4 718.4 us)
+  FlyDSL       2.61 ms  (K1..K4 1.42 ms)" data-bh="1024" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.13x</span></td></tr><tr class=""><th class="rh">2</th><th class="rh sub">32</th><th class="rh sub">8</th><th class="rh">4K</th><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=2
+seqlen=4,096 × B=2  ⇒  T=8,192
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     386.0 us   gdn_k2_kernel
+  FlyDSL      288.1 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.34x
+
+整块 pipeline wall:
+  opus WF     479.6 us  (K1..K4 91.7 us)
+  FlyDSL      462.0 us  (K1..K4 171.3 us)" data-bh="64" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.34x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=4
+seqlen=4,096 × B=4  ⇒  T=16,384
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     445.8 us   gdn_k2_kernel
+  FlyDSL      294.7 us   bv 变体 bv64w8
+  ⇒ FlyDSL 快 1.51x
+
+整块 pipeline wall:
+  opus WF     626.9 us  (K1..K4 179.2 us)
+  FlyDSL      645.7 us  (K1..K4 349.7 us)" data-bh="128" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.51x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=8
+seqlen=4,096 × B=8  ⇒  T=32,768
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     477.5 us   gdn_k2_kernel
+  FlyDSL      594.9 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.25x
+
+整块 pipeline wall:
+  opus WF     813.6 us  (K1..K4 335.7 us)
+  FlyDSL       1.30 ms  (K1..K4 700.5 us)" data-bh="256" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.25x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=16
+seqlen=4,096 × B=16  ⇒  T=65,536
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.04 ms   gdn_k2_kernel
+  FlyDSL       1.18 ms   bv 变体 bv64w8
+  ⇒ opus WF 快 1.13x
+
+整块 pipeline wall:
+  opus WF      1.78 ms  (K1..K4 717.9 us)
+  FlyDSL       2.58 ms  (K1..K4 1.42 ms)" data-bh="512" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.13x</span></td></tr><tr class=""><th class="rh">2</th><th class="rh sub">32</th><th class="rh sub">8</th><th class="rh">8K</th><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=1
+seqlen=8,192 × B=1  ⇒  T=8,192
+B·H=32
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     761.1 us   gdn_k2_kernel
+  FlyDSL      456.5 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.67x
+
+整块 pipeline wall:
+  opus WF     856.5 us  (K1..K4 93.3 us)
+  FlyDSL      632.3 us  (K1..K4 171.6 us)" data-bh="32" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.67x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=2
+seqlen=8,192 × B=2  ⇒  T=16,384
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     858.0 us   gdn_k2_kernel
+  FlyDSL      586.1 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.46x
+
+整块 pipeline wall:
+  opus WF      1.04 ms  (K1..K4 180.2 us)
+  FlyDSL      943.1 us  (K1..K4 354.8 us)" data-bh="64" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.46x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=4
+seqlen=8,192 × B=4  ⇒  T=32,768
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     891.1 us   gdn_k2_kernel
+  FlyDSL      590.4 us   bv 变体 bv64w8
+  ⇒ FlyDSL 快 1.51x
+
+整块 pipeline wall:
+  opus WF      1.23 ms  (K1..K4 336.5 us)
+  FlyDSL       1.29 ms  (K1..K4 703.2 us)" data-bh="128" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.51x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=8
+seqlen=8,192 × B=8  ⇒  T=65,536
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.03 ms   gdn_k2_kernel
+  FlyDSL       1.17 ms   bv 变体 bv64w8
+  ⇒ opus WF 快 1.14x
+
+整块 pipeline wall:
+  opus WF      1.77 ms  (K1..K4 719.0 us)
+  FlyDSL       2.57 ms  (K1..K4 1.42 ms)" data-bh="256" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.14x</span></td></tr><tr class="grp"><th class="rh">4</th><th class="rh sub">16</th><th class="rh sub">4</th><th class="rh">1K</th><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=8
+seqlen=1,024 × B=8  ⇒  T=8,192
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     103.8 us   gdn_k2_kernel
+  FlyDSL       66.2 us   bv 变体 bv64w8
+  ⇒ FlyDSL 快 1.57x
+
+整块 pipeline wall:
+  opus WF     155.7 us  (K1..K4 41.2 us)
+  FlyDSL      171.4 us  (K1..K4 97.2 us)" data-bh="128" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.57x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=16
+seqlen=1,024 × B=16  ⇒  T=16,384
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     117.1 us   gdn_k2_kernel
+  FlyDSL      146.1 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.25x
+
+整块 pipeline wall:
+  opus WF     216.2 us  (K1..K4 88.2 us)
+  FlyDSL      314.4 us  (K1..K4 165.6 us)" data-bh="256" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.25x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=32
+seqlen=1,024 × B=32  ⇒  T=32,768
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     251.8 us   gdn_k2_kernel
+  FlyDSL      309.2 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.23x
+
+整块 pipeline wall:
+  opus WF     429.8 us  (K1..K4 175.2 us)
+  FlyDSL      630.2 us  (K1..K4 318.4 us)" data-bh="512" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.23x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=64
+seqlen=1,024 × B=64  ⇒  T=65,536
+B·H=1024
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     504.6 us   gdn_k2_kernel
+  FlyDSL      627.9 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.24x
+
+整块 pipeline wall:
+  opus WF     836.8 us  (K1..K4 330.6 us)
+  FlyDSL       1.29 ms  (K1..K4 670.9 us)" data-bh="1024" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.24x</span></td></tr><tr class=""><th class="rh">4</th><th class="rh sub">16</th><th class="rh sub">4</th><th class="rh">2K</th><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=4
+seqlen=2,048 × B=4  ⇒  T=8,192
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     195.6 us   gdn_k2_kernel
+  FlyDSL      135.9 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.44x
+
+整块 pipeline wall:
+  opus WF     239.4 us  (K1..K4 41.3 us)
+  FlyDSL      237.3 us  (K1..K4 96.9 us)" data-bh="64" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.44x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=8
+seqlen=2,048 × B=8  ⇒  T=16,384
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     213.0 us   gdn_k2_kernel
+  FlyDSL      138.5 us   bv 变体 bv64w8
+  ⇒ FlyDSL 快 1.54x
+
+整块 pipeline wall:
+  opus WF     306.0 us  (K1..K4 89.7 us)
+  FlyDSL      307.3 us  (K1..K4 165.2 us)" data-bh="128" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.54x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=16
+seqlen=2,048 × B=16  ⇒  T=32,768
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     242.0 us   gdn_k2_kernel
+  FlyDSL      301.8 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.25x
+
+整块 pipeline wall:
+  opus WF     421.3 us  (K1..K4 176.4 us)
+  FlyDSL      625.6 us  (K1..K4 322.4 us)" data-bh="256" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.25x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=32
+seqlen=2,048 × B=32  ⇒  T=65,536
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     495.9 us   gdn_k2_kernel
+  FlyDSL      609.1 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.23x
+
+整块 pipeline wall:
+  opus WF     818.3 us  (K1..K4 333.9 us)
+  FlyDSL       1.27 ms  (K1..K4 667.9 us)" data-bh="512" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.23x</span></td></tr><tr class=""><th class="rh">4</th><th class="rh sub">16</th><th class="rh sub">4</th><th class="rh">4K</th><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=2
+seqlen=4,096 × B=2  ⇒  T=8,192
+B·H=32
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     385.6 us   gdn_k2_kernel
+  FlyDSL      201.4 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.91x
+
+整块 pipeline wall:
+  opus WF     430.9 us  (K1..K4 42.7 us)
+  FlyDSL      301.1 us  (K1..K4 97.4 us)" data-bh="32" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.91x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=4
+seqlen=4,096 × B=4  ⇒  T=16,384
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     386.9 us   gdn_k2_kernel
+  FlyDSL      289.0 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.34x
+
+整块 pipeline wall:
+  opus WF     480.2 us  (K1..K4 91.0 us)
+  FlyDSL      458.3 us  (K1..K4 167.1 us)" data-bh="64" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.34x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=8
+seqlen=4,096 × B=8  ⇒  T=32,768
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     443.4 us   gdn_k2_kernel
+  FlyDSL      296.7 us   bv 变体 bv64w8
+  ⇒ FlyDSL 快 1.49x
+
+整块 pipeline wall:
+  opus WF     622.8 us  (K1..K4 176.0 us)
+  FlyDSL      623.8 us  (K1..K4 324.6 us)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.49x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=16
+seqlen=4,096 × B=16  ⇒  T=65,536
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     480.8 us   gdn_k2_kernel
+  FlyDSL      601.2 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.25x
+
+整块 pipeline wall:
+  opus WF     804.9 us  (K1..K4 331.0 us)
+  FlyDSL       1.27 ms  (K1..K4 669.2 us)" data-bh="256" style="--bg:#f9c8e0;--bd:#e8a6ca;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.25x</span></td></tr><tr class=""><th class="rh">4</th><th class="rh sub">16</th><th class="rh sub">4</th><th class="rh">8K</th><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=1
+seqlen=8,192 × B=1  ⇒  T=8,192
+B·H=16
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     767.1 us   gdn_k2_kernel
+  FlyDSL      331.5 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.31x
+
+整块 pipeline wall:
+  opus WF     813.9 us  (K1..K4 43.6 us)
+  FlyDSL      431.0 us  (K1..K4 98.4 us)" data-bh="16" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.31x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=2
+seqlen=8,192 × B=2  ⇒  T=16,384
+B·H=32
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     762.9 us   gdn_k2_kernel
+  FlyDSL      457.6 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.67x
+
+整块 pipeline wall:
+  opus WF     858.0 us  (K1..K4 91.6 us)
+  FlyDSL      629.6 us  (K1..K4 168.3 us)" data-bh="32" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.67x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=4
+seqlen=8,192 × B=4  ⇒  T=32,768
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     854.5 us   gdn_k2_kernel
+  FlyDSL      587.0 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.46x
+
+整块 pipeline wall:
+  opus WF      1.04 ms  (K1..K4 178.5 us)
+  FlyDSL      918.9 us  (K1..K4 330.2 us)" data-bh="64" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.46x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=8
+seqlen=8,192 × B=8  ⇒  T=65,536
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     878.9 us   gdn_k2_kernel
+  FlyDSL      583.6 us   bv 变体 bv64w8
+  ⇒ FlyDSL 快 1.51x
+
+整块 pipeline wall:
+  opus WF      1.21 ms  (K1..K4 330.9 us)
+  FlyDSL       1.25 ms  (K1..K4 662.0 us)" data-bh="128" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.51x</span></td></tr><tr class="grp"><th class="rh">8</th><th class="rh sub">8</th><th class="rh sub">2</th><th class="rh">1K</th><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=8
+seqlen=1,024 × B=8  ⇒  T=8,192
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     101.1 us   gdn_k2_kernel
+  FlyDSL       72.0 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.40x
+
+整块 pipeline wall:
+  opus WF     128.0 us  (K1..K4 24.6 us)
+  FlyDSL      134.9 us  (K1..K4 51.4 us)" data-bh="64" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.40x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=16
+seqlen=1,024 × B=16  ⇒  T=16,384
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     103.7 us   gdn_k2_kernel
+  FlyDSL       64.6 us   bv 变体 bv64w8
+  ⇒ FlyDSL 快 1.61x
+
+整块 pipeline wall:
+  opus WF     149.4 us  (K1..K4 39.9 us)
+  FlyDSL      164.9 us  (K1..K4 93.1 us)" data-bh="128" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.61x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=32
+seqlen=1,024 × B=32  ⇒  T=32,768
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     115.2 us   gdn_k2_kernel
+  FlyDSL      144.6 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.26x
+
+整块 pipeline wall:
+  opus WF     203.9 us  (K1..K4 80.1 us)
+  FlyDSL      302.9 us  (K1..K4 155.8 us)" data-bh="256" style="--bg:#f9c8e0;--bd:#e8a6ca;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.26x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=64
+seqlen=1,024 × B=64  ⇒  T=65,536
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     247.8 us   gdn_k2_kernel
+  FlyDSL      307.2 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.24x
+
+整块 pipeline wall:
+  opus WF     409.7 us  (K1..K4 156.1 us)
+  FlyDSL      621.3 us  (K1..K4 312.4 us)" data-bh="512" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.24x</span></td></tr><tr class=""><th class="rh">8</th><th class="rh sub">8</th><th class="rh sub">2</th><th class="rh">2K</th><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=4
+seqlen=2,048 × B=4  ⇒  T=8,192
+B·H=32
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     196.8 us   gdn_k2_kernel
+  FlyDSL      102.7 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.92x
+
+整块 pipeline wall:
+  opus WF     223.4 us  (K1..K4 25.2 us)
+  FlyDSL      158.0 us  (K1..K4 50.0 us)" data-bh="32" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.92x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=8
+seqlen=2,048 × B=8  ⇒  T=16,384
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     196.7 us   gdn_k2_kernel
+  FlyDSL      135.0 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.46x
+
+整块 pipeline wall:
+  opus WF     239.6 us  (K1..K4 40.3 us)
+  FlyDSL      229.6 us  (K1..K4 92.9 us)" data-bh="64" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.46x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=16
+seqlen=2,048 × B=16  ⇒  T=32,768
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     203.9 us   gdn_k2_kernel
+  FlyDSL      139.3 us   bv 变体 bv64w8
+  ⇒ FlyDSL 快 1.46x
+
+整块 pipeline wall:
+  opus WF     288.2 us  (K1..K4 81.3 us)
+  FlyDSL      297.6 us  (K1..K4 155.0 us)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.46x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=32
+seqlen=2,048 × B=32  ⇒  T=65,536
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     239.2 us   gdn_k2_kernel
+  FlyDSL      298.3 us   bv 变体 bv64w8
+  ⇒ opus WF 快 1.25x
+
+整块 pipeline wall:
+  opus WF     398.5 us  (K1..K4 155.2 us)
+  FlyDSL      612.3 us  (K1..K4 312.6 us)" data-bh="256" style="--bg:#fbd8e9;--bd:#e7b9d3;--fg:#c12269"><span class="pill">opus WF</span><span class="num">1.25x</span></td></tr><tr class=""><th class="rh">8</th><th class="rh sub">8</th><th class="rh sub">2</th><th class="rh">4K</th><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=2
+seqlen=4,096 × B=2  ⇒  T=8,192
+B·H=16
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     386.9 us   gdn_k2_kernel
+  FlyDSL      169.5 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.28x
+
+整块 pipeline wall:
+  opus WF     414.0 us  (K1..K4 25.6 us)
+  FlyDSL      223.8 us  (K1..K4 51.0 us)" data-bh="16" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.28x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=4
+seqlen=4,096 × B=4  ⇒  T=16,384
+B·H=32
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     387.4 us   gdn_k2_kernel
+  FlyDSL      201.0 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.93x
+
+整块 pipeline wall:
+  opus WF     430.8 us  (K1..K4 41.3 us)
+  FlyDSL      297.9 us  (K1..K4 93.9 us)" data-bh="32" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.93x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=8
+seqlen=4,096 × B=8  ⇒  T=32,768
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     393.6 us   gdn_k2_kernel
+  FlyDSL      283.5 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.39x
+
+整块 pipeline wall:
+  opus WF     479.1 us  (K1..K4 82.2 us)
+  FlyDSL      443.4 us  (K1..K4 156.6 us)" data-bh="64" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.39x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=16
+seqlen=4,096 × B=16  ⇒  T=65,536
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     440.9 us   gdn_k2_kernel
+  FlyDSL      295.5 us   bv 变体 bv64w8
+  ⇒ FlyDSL 快 1.49x
+
+整块 pipeline wall:
+  opus WF     600.1 us  (K1..K4 156.9 us)
+  FlyDSL      611.4 us  (K1..K4 313.0 us)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.49x</span></td></tr><tr class=""><th class="rh">8</th><th class="rh sub">8</th><th class="rh sub">2</th><th class="rh">8K</th><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=1
+seqlen=8,192 × B=1  ⇒  T=8,192
+B·H=8
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     767.1 us   gdn_k2_kernel
+  FlyDSL      333.1 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.30x
+
+整块 pipeline wall:
+  opus WF     795.0 us  (K1..K4 25.8 us)
+  FlyDSL      386.5 us  (K1..K4 53.0 us)" data-bh="8" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.30x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=2
+seqlen=8,192 × B=2  ⇒  T=16,384
+B·H=16
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     769.3 us   gdn_k2_kernel
+  FlyDSL      332.5 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.31x
+
+整块 pipeline wall:
+  opus WF     813.7 us  (K1..K4 42.1 us)
+  FlyDSL      430.0 us  (K1..K4 93.6 us)" data-bh="16" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.31x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=4
+seqlen=8,192 × B=4  ⇒  T=32,768
+B·H=32
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     770.5 us   gdn_k2_kernel
+  FlyDSL      442.2 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.74x
+
+整块 pipeline wall:
+  opus WF     857.7 us  (K1..K4 83.7 us)
+  FlyDSL      605.7 us  (K1..K4 158.0 us)" data-bh="32" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.74x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=8
+seqlen=8,192 × B=8  ⇒  T=65,536
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     852.6 us   gdn_k2_kernel
+  FlyDSL      581.8 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.47x
+
+整块 pipeline wall:
+  opus WF      1.01 ms  (K1..K4 159.9 us)
+  FlyDSL      899.0 us  (K1..K4 315.0 us)" data-bh="64" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.47x</span></td></tr></tbody></table><p class="note">FlyDSL 赢 <b>32</b> / 64 格 · geomean(opus/FlyDSL) = <b>1.170</b> · 范围 0.80x ~ 2.31x</p></div>
+<div data-pane="flyfix" style="display:none"><table class="grid"><thead><tr><th class="rh" rowspan="2">TP</th><th class="rh sub" rowspan="2">H</th><th class="rh sub" rowspan="2">Hg</th><th class="rh" rowspan="2">seqlen</th><th class="span" colspan="4">T = 总 token 数（B = T / seqlen）</th></tr><tr><th>8K</th><th>16K</th><th>32K</th><th>64K</th></tr></thead><tbody><tr class=""><th class="rh">1</th><th class="rh sub">64</th><th class="rh sub">16</th><th class="rh">1K</th><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=8
+seqlen=1,024 × B=8  ⇒  T=8,192
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     255.1 us   gdn_k2_kernel
+  FlyDSL      203.6 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.25x
+
+整块 pipeline wall:
+  opus WF     437.6 us  (K1..K4 179.4 us)
+  FlyDSL      214.5 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 303.4 us (1.49x 慢)" data-bh="512" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.25x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=16
+seqlen=1,024 × B=16  ⇒  T=16,384
+B·H=1024
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     499.9 us   gdn_k2_kernel
+  FlyDSL      405.3 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.23x
+
+整块 pipeline wall:
+  opus WF     850.2 us  (K1..K4 348.1 us)
+  FlyDSL      411.1 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 615.6 us (1.52x 慢)" data-bh="1024" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.23x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=32
+seqlen=1,024 × B=32  ⇒  T=32,768
+B·H=2048
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.07 ms   gdn_k2_kernel
+  FlyDSL      921.2 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.16x
+
+整块 pipeline wall:
+  opus WF      1.82 ms  (K1..K4 738.8 us)
+  FlyDSL      814.4 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 1.21 ms (1.32x 慢)" data-bh="2048" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.16x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=64
+seqlen=1,024 × B=64  ⇒  T=65,536
+B·H=4096
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      2.18 ms   gdn_k2_kernel
+  FlyDSL       1.88 ms   bv 变体 bv64
+  ⇒ FlyDSL 快 1.15x
+
+整块 pipeline wall:
+  opus WF      3.67 ms  (K1..K4 1.48 ms)
+  FlyDSL       1.82 ms  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 2.42 ms (1.28x 慢)" data-bh="4096" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.15x</span></td></tr><tr class=""><th class="rh">1</th><th class="rh sub">64</th><th class="rh sub">16</th><th class="rh">2K</th><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=4
+seqlen=2,048 × B=4  ⇒  T=8,192
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     253.0 us   gdn_k2_kernel
+  FlyDSL      201.0 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.26x
+
+整块 pipeline wall:
+  opus WF     445.6 us  (K1..K4 179.7 us)
+  FlyDSL      212.7 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 298.6 us (1.49x 慢)" data-bh="256" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.26x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=8
+seqlen=2,048 × B=8  ⇒  T=16,384
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     514.6 us   gdn_k2_kernel
+  FlyDSL      392.5 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.31x
+
+整块 pipeline wall:
+  opus WF     845.5 us  (K1..K4 357.9 us)
+  FlyDSL      396.2 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 591.0 us (1.51x 慢)" data-bh="512" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.31x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=16
+seqlen=2,048 × B=16  ⇒  T=32,768
+B·H=1024
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.05 ms   gdn_k2_kernel
+  FlyDSL      909.7 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.15x
+
+整块 pipeline wall:
+  opus WF      1.80 ms  (K1..K4 742.0 us)
+  FlyDSL      797.8 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 1.18 ms (1.30x 慢)" data-bh="1024" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.15x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=32
+seqlen=2,048 × B=32  ⇒  T=65,536
+B·H=2048
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      2.13 ms   gdn_k2_kernel
+  FlyDSL       1.84 ms   bv 变体 bv64
+  ⇒ FlyDSL 快 1.16x
+
+整块 pipeline wall:
+  opus WF      3.62 ms  (K1..K4 1.48 ms)
+  FlyDSL       1.80 ms  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 2.37 ms (1.29x 慢)" data-bh="2048" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.16x</span></td></tr><tr class=""><th class="rh">1</th><th class="rh sub">64</th><th class="rh sub">16</th><th class="rh">4K</th><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=2
+seqlen=4,096 × B=2  ⇒  T=8,192
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     460.4 us   gdn_k2_kernel
+  FlyDSL      297.4 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.55x
+
+整块 pipeline wall:
+  opus WF     644.9 us  (K1..K4 179.7 us)
+  FlyDSL      309.8 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 298.6 us (1.00x 慢)" data-bh="128" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.55x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=4
+seqlen=4,096 × B=4  ⇒  T=16,384
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     486.5 us   gdn_k2_kernel
+  FlyDSL      389.8 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.25x
+
+整块 pipeline wall:
+  opus WF     829.9 us  (K1..K4 341.8 us)
+  FlyDSL      400.2 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 583.0 us (1.50x 慢)" data-bh="256" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.25x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=8
+seqlen=4,096 × B=8  ⇒  T=32,768
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.03 ms   gdn_k2_kernel
+  FlyDSL      902.2 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.15x
+
+整块 pipeline wall:
+  opus WF      1.79 ms  (K1..K4 742.3 us)
+  FlyDSL      792.7 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 1.17 ms (1.29x 慢)" data-bh="512" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.15x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=16
+seqlen=4,096 × B=16  ⇒  T=65,536
+B·H=1024
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      2.09 ms   gdn_k2_kernel
+  FlyDSL       1.82 ms   bv 变体 bv64
+  ⇒ FlyDSL 快 1.15x
+
+整块 pipeline wall:
+  opus WF      3.33 ms  (K1..K4 1.48 ms)
+  FlyDSL       1.79 ms  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 2.33 ms (1.28x 慢)" data-bh="1024" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.15x</span></td></tr><tr class=""><th class="rh">1</th><th class="rh sub">64</th><th class="rh sub">16</th><th class="rh">8K</th><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=1
+seqlen=8,192 × B=1  ⇒  T=8,192
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     884.3 us   gdn_k2_kernel
+  FlyDSL      484.7 us   bv 变体 bv16
+  ⇒ FlyDSL 快 1.82x
+
+整块 pipeline wall:
+  opus WF      1.07 ms  (K1..K4 183.0 us)
+  FlyDSL      489.0 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64 → 586.6 us (1.21x 慢)" data-bh="64" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.82x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=2
+seqlen=8,192 × B=2  ⇒  T=16,384
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     902.6 us   gdn_k2_kernel
+  FlyDSL      588.3 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.53x
+
+整块 pipeline wall:
+  opus WF      1.25 ms  (K1..K4 343.3 us)
+  FlyDSL      593.6 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 576.7 us (0.98x 慢)" data-bh="128" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.53x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=4
+seqlen=8,192 × B=4  ⇒  T=32,768
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.03 ms   gdn_k2_kernel
+  FlyDSL      899.5 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.14x
+
+整块 pipeline wall:
+  opus WF      1.77 ms  (K1..K4 743.0 us)
+  FlyDSL      783.5 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 1.16 ms (1.29x 慢)" data-bh="256" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.14x</span></td><td class="cell" data-tip="TP=1 · H=64 · Hg=16 · B=8
+seqlen=8,192 × B=8  ⇒  T=65,536
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      2.08 ms   gdn_k2_kernel
+  FlyDSL       1.82 ms   bv 变体 bv64
+  ⇒ FlyDSL 快 1.14x
+
+整块 pipeline wall:
+  opus WF      3.58 ms  (K1..K4 1.48 ms)
+  FlyDSL       1.78 ms  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 2.31 ms (1.27x 慢)" data-bh="512" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.14x</span></td></tr><tr class="grp"><th class="rh">2</th><th class="rh sub">32</th><th class="rh sub">8</th><th class="rh">1K</th><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=8
+seqlen=1,024 × B=8  ⇒  T=8,192
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     122.5 us   gdn_k2_kernel
+  FlyDSL      104.3 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.17x
+
+整块 pipeline wall:
+  opus WF     226.8 us  (K1..K4 91.2 us)
+  FlyDSL      110.0 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 145.2 us (1.39x 慢)" data-bh="256" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.17x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=16
+seqlen=1,024 × B=16  ⇒  T=16,384
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     256.5 us   gdn_k2_kernel
+  FlyDSL      204.7 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.25x
+
+整块 pipeline wall:
+  opus WF     439.0 us  (K1..K4 178.8 us)
+  FlyDSL      216.6 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 302.6 us (1.48x 慢)" data-bh="512" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.25x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=32
+seqlen=1,024 × B=32  ⇒  T=32,768
+B·H=1024
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     506.1 us   gdn_k2_kernel
+  FlyDSL      405.0 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.25x
+
+整块 pipeline wall:
+  opus WF     844.2 us  (K1..K4 336.7 us)
+  FlyDSL      410.2 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 624.5 us (1.54x 慢)" data-bh="1024" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.25x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=64
+seqlen=1,024 × B=64  ⇒  T=65,536
+B·H=2048
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.09 ms   gdn_k2_kernel
+  FlyDSL      931.9 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.17x
+
+整块 pipeline wall:
+  opus WF      1.83 ms  (K1..K4 723.1 us)
+  FlyDSL      818.0 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 1.23 ms (1.31x 慢)" data-bh="2048" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.17x</span></td></tr><tr class=""><th class="rh">2</th><th class="rh sub">32</th><th class="rh sub">8</th><th class="rh">2K</th><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=4
+seqlen=2,048 × B=4  ⇒  T=8,192
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     204.9 us   gdn_k2_kernel
+  FlyDSL      138.2 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.48x
+
+整块 pipeline wall:
+  opus WF     308.7 us  (K1..K4 91.0 us)
+  FlyDSL      148.2 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 143.1 us (1.04x 慢)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.48x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=8
+seqlen=2,048 × B=8  ⇒  T=16,384
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     246.5 us   gdn_k2_kernel
+  FlyDSL      203.3 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.21x
+
+整块 pipeline wall:
+  opus WF     429.2 us  (K1..K4 181.1 us)
+  FlyDSL      213.5 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 300.5 us (1.48x 慢)" data-bh="256" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.21x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=16
+seqlen=2,048 × B=16  ⇒  T=32,768
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     490.7 us   gdn_k2_kernel
+  FlyDSL      397.3 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.24x
+
+整块 pipeline wall:
+  opus WF     826.6 us  (K1..K4 337.5 us)
+  FlyDSL      406.1 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 606.2 us (1.53x 慢)" data-bh="512" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.24x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=32
+seqlen=2,048 × B=32  ⇒  T=65,536
+B·H=1024
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.06 ms   gdn_k2_kernel
+  FlyDSL      913.2 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.16x
+
+整块 pipeline wall:
+  opus WF      1.79 ms  (K1..K4 718.4 us)
+  FlyDSL      809.2 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 1.19 ms (1.31x 慢)" data-bh="1024" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.16x</span></td></tr><tr class=""><th class="rh">2</th><th class="rh sub">32</th><th class="rh sub">8</th><th class="rh">4K</th><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=2
+seqlen=4,096 × B=2  ⇒  T=8,192
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     386.0 us   gdn_k2_kernel
+  FlyDSL      212.2 us   bv 变体 bv16
+  ⇒ FlyDSL 快 1.82x
+
+整块 pipeline wall:
+  opus WF     479.6 us  (K1..K4 91.7 us)
+  FlyDSL      226.0 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64 → 288.1 us (1.36x 慢)" data-bh="64" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.82x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=4
+seqlen=4,096 × B=4  ⇒  T=16,384
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     445.8 us   gdn_k2_kernel
+  FlyDSL      299.6 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.49x
+
+整块 pipeline wall:
+  opus WF     626.9 us  (K1..K4 179.2 us)
+  FlyDSL      309.0 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 294.7 us (0.98x 慢)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.49x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=8
+seqlen=4,096 × B=8  ⇒  T=32,768
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     477.5 us   gdn_k2_kernel
+  FlyDSL      391.2 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.22x
+
+整块 pipeline wall:
+  opus WF     813.6 us  (K1..K4 335.7 us)
+  FlyDSL      399.0 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 594.9 us (1.52x 慢)" data-bh="256" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.22x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=16
+seqlen=4,096 × B=16  ⇒  T=65,536
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.04 ms   gdn_k2_kernel
+  FlyDSL      904.3 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.15x
+
+整块 pipeline wall:
+  opus WF      1.78 ms  (K1..K4 717.9 us)
+  FlyDSL      798.6 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 1.18 ms (1.30x 慢)" data-bh="512" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.15x</span></td></tr><tr class=""><th class="rh">2</th><th class="rh sub">32</th><th class="rh sub">8</th><th class="rh">8K</th><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=1
+seqlen=8,192 × B=1  ⇒  T=8,192
+B·H=32
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     761.1 us   gdn_k2_kernel
+  FlyDSL      341.7 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.23x
+
+整块 pipeline wall:
+  opus WF     856.5 us  (K1..K4 93.3 us)
+  FlyDSL      345.5 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv32 → 456.5 us (1.34x 慢)" data-bh="32" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.23x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=2
+seqlen=8,192 × B=2  ⇒  T=16,384
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     858.0 us   gdn_k2_kernel
+  FlyDSL      482.6 us   bv 变体 bv16
+  ⇒ FlyDSL 快 1.78x
+
+整块 pipeline wall:
+  opus WF      1.04 ms  (K1..K4 180.2 us)
+  FlyDSL      490.4 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64 → 586.1 us (1.21x 慢)" data-bh="64" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.78x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=4
+seqlen=8,192 × B=4  ⇒  T=32,768
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     891.1 us   gdn_k2_kernel
+  FlyDSL      596.4 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.49x
+
+整块 pipeline wall:
+  opus WF      1.23 ms  (K1..K4 336.5 us)
+  FlyDSL      603.3 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 590.4 us (0.99x 慢)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.49x</span></td><td class="cell" data-tip="TP=2 · H=32 · Hg=8 · B=8
+seqlen=8,192 × B=8  ⇒  T=65,536
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF      1.03 ms   gdn_k2_kernel
+  FlyDSL      899.0 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.15x
+
+整块 pipeline wall:
+  opus WF      1.77 ms  (K1..K4 719.0 us)
+  FlyDSL      792.9 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 1.17 ms (1.30x 慢)" data-bh="256" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.15x</span></td></tr><tr class="grp"><th class="rh">4</th><th class="rh sub">16</th><th class="rh sub">4</th><th class="rh">1K</th><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=8
+seqlen=1,024 × B=8  ⇒  T=8,192
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     103.8 us   gdn_k2_kernel
+  FlyDSL       75.0 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.38x
+
+整块 pipeline wall:
+  opus WF     155.7 us  (K1..K4 41.2 us)
+  FlyDSL       79.7 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 66.2 us (0.88x 慢)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.38x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=16
+seqlen=1,024 × B=16  ⇒  T=16,384
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     117.1 us   gdn_k2_kernel
+  FlyDSL      103.5 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.13x
+
+整块 pipeline wall:
+  opus WF     216.2 us  (K1..K4 88.2 us)
+  FlyDSL      109.8 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 146.1 us (1.41x 慢)" data-bh="256" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.13x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=32
+seqlen=1,024 × B=32  ⇒  T=32,768
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     251.8 us   gdn_k2_kernel
+  FlyDSL      207.1 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.22x
+
+整块 pipeline wall:
+  opus WF     429.8 us  (K1..K4 175.2 us)
+  FlyDSL      217.2 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 309.2 us (1.49x 慢)" data-bh="512" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.22x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=64
+seqlen=1,024 × B=64  ⇒  T=65,536
+B·H=1024
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     504.6 us   gdn_k2_kernel
+  FlyDSL      413.8 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.22x
+
+整块 pipeline wall:
+  opus WF     836.8 us  (K1..K4 330.6 us)
+  FlyDSL      406.9 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 627.9 us (1.52x 慢)" data-bh="1024" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.22x</span></td></tr><tr class=""><th class="rh">4</th><th class="rh sub">16</th><th class="rh sub">4</th><th class="rh">2K</th><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=4
+seqlen=2,048 × B=4  ⇒  T=8,192
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     195.6 us   gdn_k2_kernel
+  FlyDSL      110.3 us   bv 变体 bv16
+  ⇒ FlyDSL 快 1.77x
+
+整块 pipeline wall:
+  opus WF     239.4 us  (K1..K4 41.3 us)
+  FlyDSL      117.6 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64 → 135.9 us (1.23x 慢)" data-bh="64" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.77x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=8
+seqlen=2,048 × B=8  ⇒  T=16,384
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     213.0 us   gdn_k2_kernel
+  FlyDSL      137.8 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.54x
+
+整块 pipeline wall:
+  opus WF     306.0 us  (K1..K4 89.7 us)
+  FlyDSL      147.4 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 138.5 us (1.00x 慢)" data-bh="128" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.54x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=16
+seqlen=2,048 × B=16  ⇒  T=32,768
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     242.0 us   gdn_k2_kernel
+  FlyDSL      204.4 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.18x
+
+整块 pipeline wall:
+  opus WF     421.3 us  (K1..K4 176.4 us)
+  FlyDSL      214.5 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 301.8 us (1.48x 慢)" data-bh="256" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.18x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=32
+seqlen=2,048 × B=32  ⇒  T=65,536
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     495.9 us   gdn_k2_kernel
+  FlyDSL      395.4 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.25x
+
+整块 pipeline wall:
+  opus WF     818.3 us  (K1..K4 333.9 us)
+  FlyDSL      405.8 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 609.1 us (1.54x 慢)" data-bh="512" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.25x</span></td></tr><tr class=""><th class="rh">4</th><th class="rh sub">16</th><th class="rh sub">4</th><th class="rh">4K</th><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=2
+seqlen=4,096 × B=2  ⇒  T=8,192
+B·H=32
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     385.6 us   gdn_k2_kernel
+  FlyDSL      170.0 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.27x
+
+整块 pipeline wall:
+  opus WF     430.9 us  (K1..K4 42.7 us)
+  FlyDSL      177.2 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv32 → 201.4 us (1.18x 慢)" data-bh="32" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.27x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=4
+seqlen=4,096 × B=4  ⇒  T=16,384
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     386.9 us   gdn_k2_kernel
+  FlyDSL      212.4 us   bv 变体 bv16
+  ⇒ FlyDSL 快 1.82x
+
+整块 pipeline wall:
+  opus WF     480.2 us  (K1..K4 91.0 us)
+  FlyDSL      224.6 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64 → 289.0 us (1.36x 慢)" data-bh="64" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.82x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=8
+seqlen=4,096 × B=8  ⇒  T=32,768
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     443.4 us   gdn_k2_kernel
+  FlyDSL      302.0 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.47x
+
+整块 pipeline wall:
+  opus WF     622.8 us  (K1..K4 176.0 us)
+  FlyDSL      315.7 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 296.7 us (0.98x 慢)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.47x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=16
+seqlen=4,096 × B=16  ⇒  T=65,536
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     480.8 us   gdn_k2_kernel
+  FlyDSL      393.9 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.22x
+
+整块 pipeline wall:
+  opus WF     804.9 us  (K1..K4 331.0 us)
+  FlyDSL      401.2 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 601.2 us (1.53x 慢)" data-bh="256" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.22x</span></td></tr><tr class=""><th class="rh">4</th><th class="rh sub">16</th><th class="rh sub">4</th><th class="rh">8K</th><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=1
+seqlen=8,192 × B=1  ⇒  T=8,192
+B·H=16
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     767.1 us   gdn_k2_kernel
+  FlyDSL      335.2 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.29x
+
+整块 pipeline wall:
+  opus WF     813.9 us  (K1..K4 43.6 us)
+  FlyDSL      338.4 us  (K1..K4 0.0 us)" data-bh="16" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.29x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=2
+seqlen=8,192 × B=2  ⇒  T=16,384
+B·H=32
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     762.9 us   gdn_k2_kernel
+  FlyDSL      337.0 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.26x
+
+整块 pipeline wall:
+  opus WF     858.0 us  (K1..K4 91.6 us)
+  FlyDSL      341.0 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv32 → 457.6 us (1.36x 慢)" data-bh="32" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.26x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=4
+seqlen=8,192 × B=4  ⇒  T=32,768
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     854.5 us   gdn_k2_kernel
+  FlyDSL      489.2 us   bv 变体 bv16
+  ⇒ FlyDSL 快 1.75x
+
+整块 pipeline wall:
+  opus WF      1.04 ms  (K1..K4 178.5 us)
+  FlyDSL      495.0 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64 → 587.0 us (1.20x 慢)" data-bh="64" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.75x</span></td><td class="cell" data-tip="TP=4 · H=16 · Hg=4 · B=8
+seqlen=8,192 × B=8  ⇒  T=65,536
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     878.9 us   gdn_k2_kernel
+  FlyDSL      597.2 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.47x
+
+整块 pipeline wall:
+  opus WF      1.21 ms  (K1..K4 330.9 us)
+  FlyDSL      603.6 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 583.6 us (0.98x 慢)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.47x</span></td></tr><tr class="grp"><th class="rh">8</th><th class="rh sub">8</th><th class="rh sub">2</th><th class="rh">1K</th><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=8
+seqlen=1,024 × B=8  ⇒  T=8,192
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     101.1 us   gdn_k2_kernel
+  FlyDSL       61.1 us   bv 变体 bv16
+  ⇒ FlyDSL 快 1.65x
+
+整块 pipeline wall:
+  opus WF     128.0 us  (K1..K4 24.6 us)
+  FlyDSL       64.2 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64 → 72.0 us (1.18x 慢)" data-bh="64" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.65x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=16
+seqlen=1,024 × B=16  ⇒  T=16,384
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     103.7 us   gdn_k2_kernel
+  FlyDSL       75.0 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.38x
+
+整块 pipeline wall:
+  opus WF     149.4 us  (K1..K4 39.9 us)
+  FlyDSL       79.4 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 64.6 us (0.86x 慢)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.38x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=32
+seqlen=1,024 × B=32  ⇒  T=32,768
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     115.2 us   gdn_k2_kernel
+  FlyDSL      101.8 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.13x
+
+整块 pipeline wall:
+  opus WF     203.9 us  (K1..K4 80.1 us)
+  FlyDSL      108.8 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 144.6 us (1.42x 慢)" data-bh="256" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.13x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=64
+seqlen=1,024 × B=64  ⇒  T=65,536
+B·H=512
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     247.8 us   gdn_k2_kernel
+  FlyDSL      207.8 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.19x
+
+整块 pipeline wall:
+  opus WF     409.7 us  (K1..K4 156.1 us)
+  FlyDSL      217.1 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 307.2 us (1.48x 慢)" data-bh="512" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.19x</span></td></tr><tr class=""><th class="rh">8</th><th class="rh sub">8</th><th class="rh sub">2</th><th class="rh">2K</th><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=4
+seqlen=2,048 × B=4  ⇒  T=8,192
+B·H=32
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     196.8 us   gdn_k2_kernel
+  FlyDSL       89.9 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.19x
+
+整块 pipeline wall:
+  opus WF     223.4 us  (K1..K4 25.2 us)
+  FlyDSL       94.6 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv32 → 102.7 us (1.14x 慢)" data-bh="32" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.19x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=8
+seqlen=2,048 × B=8  ⇒  T=16,384
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     196.7 us   gdn_k2_kernel
+  FlyDSL      112.5 us   bv 变体 bv16
+  ⇒ FlyDSL 快 1.75x
+
+整块 pipeline wall:
+  opus WF     239.6 us  (K1..K4 40.3 us)
+  FlyDSL      119.0 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64 → 135.0 us (1.20x 慢)" data-bh="64" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.75x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=16
+seqlen=2,048 × B=16  ⇒  T=32,768
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     203.9 us   gdn_k2_kernel
+  FlyDSL      138.3 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.47x
+
+整块 pipeline wall:
+  opus WF     288.2 us  (K1..K4 81.3 us)
+  FlyDSL      146.0 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 139.3 us (1.01x 慢)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.47x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=32
+seqlen=2,048 × B=32  ⇒  T=65,536
+B·H=256
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     239.2 us   gdn_k2_kernel
+  FlyDSL      200.5 us   bv 变体 bv64
+  ⇒ FlyDSL 快 1.19x
+
+整块 pipeline wall:
+  opus WF     398.5 us  (K1..K4 155.2 us)
+  FlyDSL      210.8 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 298.3 us (1.49x 慢)" data-bh="256" style="--bg:#e7ddfd;--bd:#cbbfee;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.19x</span></td></tr><tr class=""><th class="rh">8</th><th class="rh sub">8</th><th class="rh sub">2</th><th class="rh">4K</th><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=2
+seqlen=4,096 × B=2  ⇒  T=8,192
+B·H=16
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     386.9 us   gdn_k2_kernel
+  FlyDSL      170.9 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.26x
+
+整块 pipeline wall:
+  opus WF     414.0 us  (K1..K4 25.6 us)
+  FlyDSL      173.0 us  (K1..K4 0.0 us)" data-bh="16" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.26x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=4
+seqlen=4,096 × B=4  ⇒  T=16,384
+B·H=32
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     387.4 us   gdn_k2_kernel
+  FlyDSL      171.0 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.26x
+
+整块 pipeline wall:
+  opus WF     430.8 us  (K1..K4 41.3 us)
+  FlyDSL      178.8 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv32 → 201.0 us (1.18x 慢)" data-bh="32" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.26x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=8
+seqlen=4,096 × B=8  ⇒  T=32,768
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     393.6 us   gdn_k2_kernel
+  FlyDSL      212.2 us   bv 变体 bv16
+  ⇒ FlyDSL 快 1.86x
+
+整块 pipeline wall:
+  opus WF     479.1 us  (K1..K4 82.2 us)
+  FlyDSL      225.4 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64 → 283.5 us (1.34x 慢)" data-bh="64" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.86x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=16
+seqlen=4,096 × B=16  ⇒  T=65,536
+B·H=128
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     440.9 us   gdn_k2_kernel
+  FlyDSL      298.7 us   bv 变体 bv32
+  ⇒ FlyDSL 快 1.48x
+
+整块 pipeline wall:
+  opus WF     600.1 us  (K1..K4 156.9 us)
+  FlyDSL      310.3 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64w8 → 295.5 us (0.99x 慢)" data-bh="128" style="--bg:#dccefc;--bd:#c0aeef;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.48x</span></td></tr><tr class=""><th class="rh">8</th><th class="rh sub">8</th><th class="rh sub">2</th><th class="rh">8K</th><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=1
+seqlen=8,192 × B=1  ⇒  T=8,192
+B·H=8
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     767.1 us   gdn_k2_kernel
+  FlyDSL      335.9 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.28x
+
+整块 pipeline wall:
+  opus WF     795.0 us  (K1..K4 25.8 us)
+  FlyDSL      337.7 us  (K1..K4 0.0 us)" data-bh="8" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.28x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=2
+seqlen=8,192 × B=2  ⇒  T=16,384
+B·H=16
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     769.3 us   gdn_k2_kernel
+  FlyDSL      336.3 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.29x
+
+整块 pipeline wall:
+  opus WF     813.7 us  (K1..K4 42.1 us)
+  FlyDSL      339.3 us  (K1..K4 0.0 us)" data-bh="16" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.29x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=4
+seqlen=8,192 × B=4  ⇒  T=32,768
+B·H=32
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     770.5 us   gdn_k2_kernel
+  FlyDSL      338.7 us   bv 变体 bv16
+  ⇒ FlyDSL 快 2.28x
+
+整块 pipeline wall:
+  opus WF     857.7 us  (K1..K4 83.7 us)
+  FlyDSL      343.0 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv32 → 442.2 us (1.31x 慢)" data-bh="32" style="--bg:#ccb7fb;--bd:#af94f2;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">2.28x</span></td><td class="cell" data-tip="TP=8 · H=8 · Hg=2 · B=8
+seqlen=8,192 × B=8  ⇒  T=65,536
+B·H=64
+
+K5+K6 融合 kernel (profiler device time):
+  opus WF     852.6 us   gdn_k2_kernel
+  FlyDSL      488.2 us   bv 变体 bv16
+  ⇒ FlyDSL 快 1.75x
+
+整块 pipeline wall:
+  opus WF      1.01 ms  (K1..K4 159.9 us)
+  FlyDSL      492.7 us  (K1..K4 0.0 us)
+
+as-shipped 会选 bv64 → 581.8 us (1.19x 慢)" data-bh="64" style="--bg:#d3c1fc;--bd:#b79ff1;--fg:#6d33d1"><span class="pill">FlyDSL</span><span class="num">1.75x</span></td></tr></tbody></table><p class="note">FlyDSL 赢 <b>64</b> / 64 格 · geomean(opus/FlyDSL) = <b>1.461</b> · 范围 1.13x ~ 2.29x</p></div>
+
+<h2>整块 pipeline 的 wall</h2>
+<p class="sub1">K5+K6 之外两条 pipeline 的前端也不同：opus 把 K1..K4 融进一个 HIP
+kernel（<code>gdn_k1_neumann_kernel</code>），FlyDSL 这边是
+Triton prepare 三件套，
+两者之比 geomean =
+0.50x。</p>
+<p class="note">as-shipped 全 pipeline：geomean(opus/FlyDSL) =
+<b>0.879</b>，
+FlyDSL 赢 <b>19</b>/64 格。
+K5+K6 单看是 geomean <b>1.170</b>（修正变体后 <b>1.461</b>）。</p>
+
+<p class="foot">数据 <code>k5k6_compare_gfx950.json</code> ·
+复现 <code>python sweep_k5k6_compare.py</code> ·
+变体探针 <code>python probe_fused_variant.py</code> ·
+torch 2.10.0+rocm7.2.4.git3d3aa833</p>
+<div id="tip"></div><script>
+const tip=document.getElementById('tip');
+document.addEventListener('mouseover',e=>{
+ const t=e.target.closest('[data-tip]'); if(!t)return;
+ tip.textContent=t.dataset.tip; tip.style.display='block';
+ const r=t.getBoundingClientRect(), b=tip.getBoundingClientRect();
+ tip.style.left=Math.min(r.left,innerWidth-b.width-14)+'px';
+ tip.style.top=(r.bottom+8+b.height>innerHeight?r.top-b.height-8:r.bottom+8)+'px';
+});
+document.addEventListener('mouseout',e=>{
+ if(e.target.closest('[data-tip]'))tip.style.display='none';});
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
+ document.querySelectorAll('[data-pane]').forEach(p=>
+  p.style.display=p.dataset.pane===b.dataset.pane?'':'none');
+});
+</script></body></html>

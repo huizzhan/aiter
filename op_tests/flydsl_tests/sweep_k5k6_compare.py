@@ -51,26 +51,40 @@ K5K6 = {
     "fly": "fwd_h_o_flydsl",
     "flyfix": "fwd_h_o_flydsl",
 }
-FRONT = {"wf": "gdn_k1_", "fly": "gdn_prepare", "flyfix": "gdn_prepare"}
+FRONT = {"wf": ("gdn_k1_",), "fly": ("gdn_prepare",), "flyfix": ("gdn_prepare",)}
+# The Triton prepare trio, for when the FlyDSL front end is unavailable: its
+# gdn_prepare kernel calls flydsl.expr.gpu.shuffle, which flydsl 0.2.4 does not
+# expose.  The fused K5+K6 kernel itself needs no shuffle, so pairing it with
+# the Triton front end still measures the stage this script is about.
+TRITON_FRONT = ("cumsum", "recompute_w_u", "inverse_kernel")
 BACKENDS = ("wf", "fly", "flyfix")
 VARIANT_RE = re.compile(r"flydsl_vk_(\w+)")
 
 
-def cu_scaled_variant(bh: int, cus: int, V: int = 128) -> str:
-    """The BV variant whose grid is closest to one CTA wave on ``cus`` CUs.
+def cu_scaled_variant(bh: int, cus: int, V: int = 128, arch: str = "gfx942") -> str:
+    """The BV variant whose grid best fits ``cus`` CUs, per ``probe_fused_variant``.
 
-    ``_hn_variant`` in the PR keys off absolute ``H*N`` thresholds (32 / 80)
-    with no CU term, which puts one wave of CTAs on a 304-CU part and up to
-    3.2 waves here.  Smallest BV whose grid still fits, largest otherwise.
+    gfx942: the knee is one CTA wave, and BV=64 wants the wave-widened ``w8``
+    instance.  ``_hn_variant`` in the PR keys off absolute ``H*N`` thresholds
+    (32 / 80) with no CU term, which is one wave on a 304-CU part and up to
+    3.2 waves on an 80-CU one.
+
+    gfx950: the probe puts the knee at two waves instead, and ``w8`` is a
+    1.4x regression at large B*H rather than a win.
     """
+    if arch == "gfx950":
+        for tag, bv in (("bv16", 16), ("bv32", 32), ("bv64", 64)):
+            if -(-V // bv) * bh <= 2 * cus:
+                return tag
+        return "bv64"
     for tag, bv in (("bv16", 16), ("bv32", 32), ("bv64w8", 64)):
         if -(-V // bv) * bh <= cus:
             return tag
     return "bv64w8"
 
 
-def fly_fused_callable(t: dict):
-    """FlyDSL K1..K4 + the fused K5+K6, forced past the 304-CU gate."""
+def fly_fused_callable(t: dict, front: str):
+    """The K1..K4 front end plus the fused K5+K6, forced past the auto gate."""
     from aiter.ops.triton.gated_delta_net import chunk_gated_delta_rule_opt_vk
 
     def run():
@@ -85,34 +99,70 @@ def fly_fused_callable(t: dict):
             cu_seqlens=t["cu"],
             prefill_metadata=t["meta"],
             use_chunk_flydsl=True,
-            use_prepare_flydsl=True,
+            use_prepare_flydsl=front == "flydsl",
             fusion="always",
         )
 
     return run
 
 
-def fly_fixed_callable(t: dict, variant: str):
+def _prepare_outputs(t: dict, front: str):
+    """``w``, ``u`` and ``g_cumsum`` from whichever front end is in use."""
+    if front == "flydsl":
+        from aiter.ops.flydsl.linear_attention_prefill_kernels import (
+            gdn_prepare_fwd_flydsl,
+        )
+
+        return gdn_prepare_fwd_flydsl(
+            k=t["k"],
+            v=t["v"],
+            g=t["g"],
+            beta=t["beta"],
+            cu_seqlens=t["cu"],
+            use_exp2=True,
+            prefill_metadata=t["meta"],
+        )
+
+    from aiter.ops.triton._triton_kernels.gated_delta_rule.prefill.fused_cumsum_kkt import (  # noqa: E501
+        fused_chunk_local_cumsum_scaled_dot_kkt_fwd,
+    )
+    from aiter.ops.triton._triton_kernels.gated_delta_rule.prefill.fused_solve_tril_recompute import (  # noqa: E501
+        fused_solve_tril_recompute_w_u,
+    )
+
+    g_cumsum, a_raw = fused_chunk_local_cumsum_scaled_dot_kkt_fwd(
+        k=t["k"],
+        beta=t["beta"],
+        g=t["g"],
+        cu_seqlens=t["cu"],
+        use_exp2=True,
+        prefill_metadata=t["meta"],
+    )
+    w, u = fused_solve_tril_recompute_w_u(
+        A_raw=a_raw,
+        k=t["k"],
+        v=t["v"],
+        beta=t["beta"],
+        g_cumsum=g_cumsum,
+        cu_seqlens=t["cu"],
+        use_exp2=True,
+        prefill_metadata=t["meta"],
+    )
+    return w, u, g_cumsum
+
+
+def fly_fixed_callable(t: dict, variant: str, front: str):
     """The fused K5+K6 with an explicit BV instance.
 
     ``chunk_gated_delta_rule_opt_vk`` does not forward ``variant``, so this
     drives the wrapper directly.  K1..K4 runs once outside the timed region --
     it is variant-independent, and the ``fly`` column already measures it.
     """
-    from aiter.ops.flydsl.linear_attention_prefill_kernels import (
+    from aiter.ops.flydsl.gdn_fused_gfx942_kernels import (
         chunk_gated_delta_rule_fwd_h_o_flydsl,
-        gdn_prepare_fwd_flydsl,
     )
 
-    w, u, g_cumsum = gdn_prepare_fwd_flydsl(
-        k=t["k"],
-        v=t["v"],
-        g=t["g"],
-        beta=t["beta"],
-        cu_seqlens=t["cu"],
-        use_exp2=True,
-        prefill_metadata=t["meta"],
-    )
+    w, u, g_cumsum = _prepare_outputs(t, front)
     o = t["v"].new_empty(t["v"].shape)
 
     def run():
@@ -133,20 +183,23 @@ def fly_fixed_callable(t: dict, variant: str):
     return run
 
 
-def measure_one(backend: str, t: dict, variant: str | None = None) -> dict:
+def measure_one(
+    backend: str, t: dict, variant: str | None = None, front: str = "flydsl"
+) -> dict:
     if backend == "wf":
         run = B.make_callable("wf", t)
     elif backend == "fly":
-        run = fly_fused_callable(t)
+        run = fly_fused_callable(t, front)
     else:
-        run = fly_fixed_callable(t, variant)
+        run = fly_fixed_callable(t, variant, front)
     run()
     torch.cuda.synchronize()
     wall = B.bench_wall_us(run)
     kernels = B.profile_kernels(run)
 
+    pats = FRONT[backend] if (backend == "wf" or front == "flydsl") else TRITON_FRONT
     k5k6 = sum(us for n, us in kernels.items() if K5K6[backend] in n)
-    front = sum(us for n, us in kernels.items() if FRONT[backend] in n)
+    front_us = sum(us for n, us in kernels.items() if any(p in n for p in pats))
     if k5k6 <= 0.0:
         raise RuntimeError(
             f"{backend}: no {K5K6[backend]} kernel ran -- the path fell back. "
@@ -155,7 +208,7 @@ def measure_one(backend: str, t: dict, variant: str | None = None) -> dict:
     out = {
         "wall_us": wall,
         "k5k6_us": k5k6,
-        "front_us": front,
+        "front_us": front_us,
         "kernel_sum_us": sum(kernels.values()),
     }
     for n in kernels:
@@ -166,7 +219,7 @@ def measure_one(backend: str, t: dict, variant: str | None = None) -> dict:
     return out
 
 
-def measure(tp: int, seqlen: int, total: int, cus: int) -> dict:
+def measure(tp: int, seqlen: int, total: int, cus: int, front: str, arch: str) -> dict:
     hg, h = HK_MODEL // tp, HV_MODEL // tp
     n_seqs = total // seqlen
     B.HK, B.HV, B.TP = HK_MODEL, HV_MODEL, tp
@@ -190,12 +243,12 @@ def measure(tp: int, seqlen: int, total: int, cus: int) -> dict:
         cell["skipped"] = f"inputs: {exc}"
         return cell
 
-    want = cu_scaled_variant(cell["bh"], cus)
+    want = cu_scaled_variant(cell["bh"], cus, arch=arch)
     cell["cu_scaled_variant"] = want
     for backend in BACKENDS:
         try:
             cell["backends"][backend] = measure_one(
-                backend, t, want if backend == "flyfix" else None
+                backend, t, want if backend == "flyfix" else None, front
             )
         except Exception as exc:  # noqa: BLE001
             cell["errors"][backend] = f"{type(exc).__name__}: {exc}"
@@ -213,13 +266,30 @@ def main() -> int:
     ap.add_argument("--seqlens", type=int, nargs="+", default=list(SEQLENS))
     ap.add_argument("--totals", type=int, nargs="+", default=list(TOTALS))
     ap.add_argument("--out", default=str(Path(__file__).with_name("k5k6_compare.json")))
+    ap.add_argument(
+        "--front",
+        choices=("auto", "flydsl", "triton"),
+        default="auto",
+        help="K1..K4 front end for the FlyDSL columns; auto falls back to the "
+        "Triton prepare trio when the installed flydsl lacks gpu.shuffle",
+    )
     args = ap.parse_args()
 
+    front = args.front
+    if front == "auto":
+        try:
+            import flydsl.expr.gpu as _fx_gpu
+
+            front = "flydsl" if hasattr(_fx_gpu, "shuffle") else "triton"
+        except ImportError:
+            front = "triton"
+
     import aiter
-    from aiter.ops.flydsl.linear_attention_prefill_kernels import (
-        _device_cu_count,
-        should_use_fused_gfx942,
+    from aiter.ops.flydsl.gdn_fused_gfx942_kernels import (
+        is_fused_k5k6_gfx942_unsupported,
+        should_use_fused_k5k6_gfx942,
     )
+    from aiter.ops.flydsl.linear_attention_prefill_kernels import _device_cu_count
 
     props = torch.cuda.get_device_properties(0)
     out = {
@@ -229,7 +299,9 @@ def main() -> int:
         "torch": torch.__version__,
         "aiter_path": aiter.__file__,
         "flydsl_cu_count": _device_cu_count(),
-        "auto_would_fuse_here": should_use_fused_gfx942(H=8, N=1, V=128),
+        "front": front,
+        "fused_unsupported_reason": is_fused_k5k6_gfx942_unsupported(),
+        "auto_would_fuse_here": should_use_fused_k5k6_gfx942(H=8, N=1, V=128),
         "Hk_model": HK_MODEL,
         "Hv_model": HV_MODEL,
         "gqa_ratio": HV_MODEL // HK_MODEL,
@@ -249,7 +321,9 @@ def main() -> int:
                 if tok % seqlen:
                     done += 1
                     continue
-                cell = measure(tp, seqlen, tok, out["cus"])
+                cell = measure(
+                    tp, seqlen, tok, out["cus"], front, out["gfx"].split(":")[0]
+                )
                 out["cells"].append(cell)
                 done += 1
                 bk = cell["backends"]
