@@ -33,9 +33,28 @@ _compiled_o_kernels: dict = {}
 # CDNA3 / CDNA4 both provide the 16x16x16 bf16 MFMA the kernel is built on.
 _SUPPORTED_ARCHS = ("gfx942", "gfx950")
 
-# One V-tile per CTA. 64 keeps the LDS footprint at 64 KiB, which fits gfx942;
-# gfx950's 160 KiB admits 128, which halves the q/k re-read across V-tiles.
-_DEFAULT_BV = 64
+
+def _default_bv(V: int) -> int:
+    """One V-tile per CTA.
+
+    A wider tile cuts the q/k/A re-read across V-tiles -- BV=128 moves 28% less
+    traffic than BV=64 -- but costs LDS, and below gfx950's 160 KiB the CTAs per
+    CU drop faster than the traffic saved. gfx942's 64 KiB only fits 64 anyway.
+    """
+    return min(128 if _host._ARCH == "gfx950" else 64, V)
+
+
+def _default_nr_split(BV: int, BT: int) -> int:
+    """Waves along N per 16 query rows.
+
+    The kernel's LDS footprint is fixed by the tile, so once it is large enough
+    to cap the CTAs per CU, the only way left to add resident waves is to widen
+    the CTA. That is worth doing exactly when the tile is wide enough to keep
+    the extra waves fed: BV=128 splits, narrower tiles already fit more CTAs.
+    """
+    if BV >= 128 and BV // 16 % 2 == 0 and BT // 16 % 2 == 0:
+        return 2
+    return 1
 
 
 def is_flydsl_k6_unsupported(
@@ -63,7 +82,8 @@ def is_flydsl_k6_unsupported(
         return f"the FlyDSL K6 kernel needs a power-of-two K in 64..256; got K={K}"
     if V % BV:
         return f"BV={BV} must divide V={V}"
-    lds_kib = (2 * 64 * K + BV * K + 64 * BV + 64 * 64) * 2 / 1024
+    # k + h + v + A; q is register-resident (see the kernel's LDS budget note).
+    lds_kib = (64 * K + BV * K + 64 * BV + 64 * 64) * 2 / 1024
     budget = 160.0 if _host._ARCH == "gfx950" else 64.0
     if lds_kib > budget:
         return (
@@ -79,12 +99,14 @@ def flydsl_k6_supported(
     h: torch.Tensor,
     K: int,
     V: int,
-    BV: int = _DEFAULT_BV,
+    BV: int | None = None,
     chunk_size: int = 64,
 ) -> bool:
     """Whether the standalone K6 kernel can serve this call."""
     return (
-        is_flydsl_k6_unsupported(q=q, h=h, K=K, V=V, BV=BV, chunk_size=chunk_size)
+        is_flydsl_k6_unsupported(
+            q=q, h=h, K=K, V=V, BV=BV or _default_bv(V), chunk_size=chunk_size
+        )
         is None
     )
 
@@ -104,6 +126,7 @@ def chunk_fwd_o_flydsl(
     num_decode_tokens: int = 0,
     prefill_metadata: GatedDeltaRulePrefillMetadata | None = None,
     BV: int | None = None,
+    NR_SPLIT: int | None = None,
 ) -> torch.Tensor:
     """FlyDSL K6: o = scale * (exp(g) * q @ h^T + tril(gated q @ k^T) @ v_new).
 
@@ -126,7 +149,9 @@ def chunk_fwd_o_flydsl(
     V = v.shape[-1]
     BT = chunk_size
     if BV is None:
-        BV = min(_DEFAULT_BV, V)
+        BV = _default_bv(V)
+    if NR_SPLIT is None:
+        NR_SPLIT = _default_nr_split(BV, BT)
     if scale is None:
         scale = K**-0.5
 
@@ -202,6 +227,7 @@ def chunk_fwd_o_flydsl(
         is_varlen,
         bool(use_exp2),
         index_stride,
+        NR_SPLIT,
     )
     if cache_key not in _compiled_o_kernels:
         _compiled_o_kernels[cache_key] = compile_chunk_gated_delta_o(
@@ -216,6 +242,7 @@ def chunk_fwd_o_flydsl(
             IS_VARLEN=is_varlen,
             G_IS_LOG2_SCALED=bool(use_exp2),
             INDEX_STRIDE=index_stride,
+            NR_SPLIT=NR_SPLIT,
         )
     launch_fn = _compiled_o_kernels[cache_key]
 

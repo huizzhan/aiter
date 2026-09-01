@@ -53,6 +53,7 @@ def compile_chunk_gated_delta_o(
     IS_VARLEN: bool = True,
     G_IS_LOG2_SCALED: bool = False,
     INDEX_STRIDE: int = 1,
+    NR_SPLIT: int = 1,
 ):
     """Build the standalone K6 launcher for one compile-time configuration.
 
@@ -71,13 +72,28 @@ def compile_chunk_gated_delta_o(
     WARP_SIZE = 64
 
     M_WAVES = BT // MFMA_M
-    NUM_WARPS = M_WAVES
+    # NR_SPLIT widens the CTA along N: the same LDS footprint gets twice the
+    # resident waves, which is the only lever left once a tile is large enough
+    # that LDS caps the CTAs per CU.
+    NUM_WARPS = M_WAVES * NR_SPLIT
     BLOCK_THREADS = NUM_WARPS * WARP_SIZE
 
-    N_REPEAT = BV // MFMA_N  # V-tiles per wave, GEMM3 / GEMM4b
+    N_REPEAT = BV // MFMA_N  # V-tiles, GEMM3 / GEMM4b
     BT_STEPS = BT // MFMA_K  # key-column tiles (GEMM4a) / contraction steps
     K_TILES = K // MFMA_K
     GRID_V = V // BV
+
+    assert (
+        N_REPEAT % NR_SPLIT == 0
+    ), f"NR_SPLIT={NR_SPLIT} must divide the {N_REPEAT} V-tiles of BV={BV}"
+    assert BT_STEPS % NR_SPLIT == 0, (
+        f"NR_SPLIT={NR_SPLIT} must divide the {BT_STEPS} key-column tiles of "
+        f"BT={BT}; GEMM4a splits them the same way"
+    )
+    assert NUM_WARPS <= 16, f"{NUM_WARPS} waves exceeds the 1024-thread block"
+    # Per-wave tile counts under the split.
+    N_REPEAT_LOCAL = N_REPEAT // NR_SPLIT
+    BT_STEPS_LOCAL = BT_STEPS // NR_SPLIT
 
     _fast_exp = _make_fast_exp(G_IS_LOG2_SCALED)
 
@@ -85,18 +101,20 @@ def compile_chunk_gated_delta_o(
     # Row-major, no XOR swizzle: the bank-conflict work belongs to a later
     # tuning pass, and a plain layout keeps every stage below a straight
     # HBM-tile -> LDS-tile copy with no transpose.
-    LDS_Q_ELEMS = BT * K
+    #
+    # q is deliberately absent. It is the A operand of both GEMM3 and GEMM4a,
+    # and the M=BT axis is already split across waves, so a wave only ever
+    # touches its own 16 rows -- there is nothing to share through LDS. Loading
+    # it straight into an A fragment saves BT*K bf16 (16 KiB at K=128), which is
+    # what lets a second CTA fit per CU.
     LDS_K_ELEMS = BT * K
     LDS_H_ELEMS = BV * K
     LDS_V_ELEMS = BT * BV
     LDS_A_ELEMS = BT * BT
-    _lds_kib = (
-        (LDS_Q_ELEMS + LDS_K_ELEMS + LDS_H_ELEMS + LDS_V_ELEMS + LDS_A_ELEMS) * 2 / 1024
-    )
+    _lds_kib = (LDS_K_ELEMS + LDS_H_ELEMS + LDS_V_ELEMS + LDS_A_ELEMS) * 2 / 1024
 
     @fx.struct
     class SharedStorage:
-        lds_q: fx.Array[fx.BFloat16, LDS_Q_ELEMS, 16]
         lds_k: fx.Array[fx.BFloat16, LDS_K_ELEMS, 16]
         lds_h: fx.Array[fx.BFloat16, LDS_H_ELEMS, 16]
         lds_v: fx.Array[fx.BFloat16, LDS_V_ELEMS, 16]
@@ -131,6 +149,20 @@ def compile_chunk_gated_delta_o(
         f"not tile BT={BT}"
     )
 
+    # The XOR swizzle folds the row index into the 4-element group index, so an
+    # MFMA fragment's 16 lanes spread over all 32 banks instead of piling onto
+    # one. Without it the B-operand read of a [rows, 256B] tile puts every lane
+    # on bank 0 -- a 16-way conflict on the hottest read in the kernel.
+    # It splits a thread's 8-element run into two non-adjacent 4-element groups,
+    # which is why staging writes go out as a lo/hi pair.
+    LDS_HALF = LOAD_VEC // 2
+
+    # Loads per thread for each tile, i.e. how many (row-batch, column-segment)
+    # passes it takes to cover the tile.
+    N_LOADS_K = (BT // ROWS_PER_BATCH) * (K // ROW_SEG)
+    N_LOADS_H = (BV // ROWS_PER_BATCH) * (K // ROW_SEG)
+    N_LOADS_V = (BT // ROWS_PER_BATCH_V) * (BV // V_COLS)
+
     STRIDE_QK_C = Hg * K  # q / k HBM row pitch (token-major, GQA-shared)
 
     _kernel_name = f"chunk_gdn_fwd_o_flydsl_vk_bv{BV}" + _BF16_KERNEL_SUFFIX
@@ -164,6 +196,20 @@ def compile_chunk_gated_delta_o(
         lane = tid % fx.Int32(WARP_SIZE)
         lane_n = lane % fx.Int32(16)
         lane_m_base = lane // fx.Int32(16)
+
+        # Wave grid: wid_m owns 16 query rows, wid_n owns a slice of the N axis.
+        # At NR_SPLIT == 1 this collapses to wid_m == wid, wid_n == 0.
+        if const_expr(NR_SPLIT == 1):
+            wid_m = wid
+        else:
+            wid_m = wid % fx.Int32(M_WAVES)
+        wid_n = wid // fx.Int32(M_WAVES)
+
+        def _nr_n(nr_local):
+            """Column offset (in elements) of this wave's local N tile."""
+            if const_expr(NR_SPLIT == 1):
+                return fx.Int32(nr_local * 16)
+            return (fx.Int32(nr_local * NR_SPLIT) + wid_n) * fx.Int32(16)
 
         def _flat_buffer(tensor):
             """1-D bounds-checked view over ``tensor``'s whole footprint."""
@@ -246,63 +292,112 @@ def compile_chunk_gated_delta_o(
         # -- MMA atom, shared by all three GEMMs --
         mma_atom = fx.make_mma_atom(fx.rocdl.MFMA(MFMA_M, MFMA_N, MFMA_K, fx.BFloat16))
         mma = fx.make_tiled_mma(
-            mma_atom, fx.make_layout((M_WAVES, 1, 1), (1, M_WAVES, 0))
+            mma_atom, fx.make_layout((M_WAVES, NR_SPLIT, 1), (1, M_WAVES, 0))
         )
 
         cp_lds_x4 = fx.make_copy_atom(fx.UniversalCopy64b(), fx.BFloat16)
         cp_lds_x1 = fx.make_copy_atom(fx.UniversalCopy16b(), fx.BFloat16)
         tc_c_x1 = fx.make_tiled_copy_C(cp_lds_x1, mma).get_slice(tid)
 
-        # -- LDS views (row-major, no swizzle) --
+        # -- LDS views (group-major + XOR swizzle) --
+        def _swz(cols):
+            """Row-keyed XOR fold over the 4-element groups of a `cols`-wide row."""
+            ng = cols // 4
+            return fx.static(
+                fx.SwizzleType.get(int(math.log2(ng)), 2, int(math.log2(cols)) - 2)
+            )
+
         lds = fx.SharedAllocator().allocate(SharedStorage).peek()
-        sQ = fx.make_view(lds.lds_q.ptr, fx.make_ordered_layout((BT, K), (1, 0)))
-        sK = fx.make_view(lds.lds_k.ptr, fx.make_ordered_layout((BT, K), (1, 0)))
-        sH = fx.make_view(lds.lds_h.ptr, fx.make_ordered_layout((BV, K), (1, 0)))
-        # lds_v keeps the HBM orientation [BT, BV] so staging is a plain copy.
-        # GEMM4b wants (n=V, contraction=BT), so its B operand reads this view
-        # with the contraction strided by BV -- four 16b reads per fragment
-        # instead of one 64b read. Transposing the store to recover the wide
-        # read is a tuning-pass change, not a correctness one.
-        sV_store = fx.make_view(lds.lds_v.ptr, fx.make_ordered_layout((BT, BV), (1, 0)))
-        sV_gemm = fx.make_view(lds.lds_v.ptr, fx.make_layout((BV, BT), (1, BV)))
-        sA = fx.make_view(lds.lds_A.ptr, fx.make_ordered_layout((BT, BT), (1, 0)))
+        swz_k = _swz(K)
+        swz_v = _swz(BV)
+        swz_A = _swz(BT)
+        k_inner = fx.make_ordered_layout((BT, K), (1, 0))
+        h_inner = fx.make_ordered_layout((BV, K), (1, 0))
+        v_inner = fx.make_ordered_layout((BT, BV), (1, 0))
+
+        sK = fx.make_view(lds.lds_k.ptr, fx.make_composed_layout(swz_k, k_inner))
+        sH = fx.make_view(lds.lds_h.ptr, fx.make_composed_layout(swz_k, h_inner))
+        sV_store = fx.make_view(lds.lds_v.ptr, fx.make_composed_layout(swz_v, v_inner))
+        # lds_v keeps the HBM orientation [BT, BV] so staging stays a plain
+        # copy. GEMM4b wants (n=V, contraction=BT), so its B operand reads the
+        # same bytes through a transposed view, which strides the contraction by
+        # BV -- four 16b reads per fragment instead of one 64b read. Both views
+        # compose the SAME swizzle over layouts that agree on the physical
+        # offset, so they address identical slots.
+        sV_gemm = fx.make_view(
+            lds.lds_v.ptr,
+            fx.make_composed_layout(swz_v, fx.make_layout((BV, BT), (1, BV))),
+        )
+        sA = fx.make_view(
+            lds.lds_A.ptr,
+            fx.make_composed_layout(swz_A, fx.make_ordered_layout((BT, BT), (1, 0))),
+        )
+
+        # Staging destinations: the swizzle scatters a thread's 8-element run
+        # into a lo and a hi 4-element group, addressed from the same tile
+        # coordinate via the +LDS_HALF composed offset.
+        sK_hi = fx.make_view(
+            lds.lds_k.ptr, fx.make_composed_layout(swz_k, LDS_HALF, k_inner)
+        )
+        sH_hi = fx.make_view(
+            lds.lds_h.ptr, fx.make_composed_layout(swz_k, LDS_HALF, h_inner)
+        )
+        sV_hi = fx.make_view(
+            lds.lds_v.ptr, fx.make_composed_layout(swz_v, LDS_HALF, v_inner)
+        )
 
         # -- Tiled copies for the HBM -> LDS staging --
         cp_g2r = fx.make_copy_atom(fx.rocdl.BufferCopy128b(), fx.BFloat16)
-        cp_r2s = fx.make_copy_atom(fx.UniversalCopy(128), fx.BFloat16)
+        cp_r2s = fx.make_copy_atom(fx.UniversalCopy64b(), fx.BFloat16)
 
         def _make_tiled_pair(threads_per_row, rows_per_batch):
-            """(global->reg, reg->LDS) tiled copies for one tile geometry."""
+            """(global->reg, reg->LDS) tiled copies for one tile geometry.
+
+            The two differ in value width: the global read moves a full
+            8-element run, the LDS write moves one swizzled 4-element group.
+            """
             tile = fx.make_tile(rows_per_batch, LOAD_VEC * threads_per_row)
-            tv = fx.make_layout(
-                ((threads_per_row, rows_per_batch), (1, LOAD_VEC)),
-                ((rows_per_batch * LOAD_VEC, 1), (1, rows_per_batch)),
+            thr = (threads_per_row, rows_per_batch)
+            thr_stride = (rows_per_batch * LOAD_VEC, 1)
+            tv_load = fx.make_layout(
+                (thr, (1, LOAD_VEC)), (thr_stride, (1, rows_per_batch))
+            )
+            tv_store = fx.make_layout(
+                (thr, (1, LDS_HALF)), (thr_stride, (1, rows_per_batch))
             )
             return (
-                fx.make_tiled_copy(cp_g2r, tv, tile).get_slice(tid),
-                fx.make_tiled_copy(cp_r2s, tv, tile).get_slice(tid),
+                fx.make_tiled_copy(cp_g2r, tv_load, tile).get_slice(tid),
+                fx.make_tiled_copy(cp_r2s, tv_store, tile).get_slice(tid),
             )
 
         tc_g2r, tc_r2s = _make_tiled_pair(THREADS_PER_ROW, ROWS_PER_BATCH)
         tc_g2r_v, tc_r2s_v = _make_tiled_pair(THREADS_PER_ROW_V, ROWS_PER_BATCH_V)
 
-        # Staging is split into issue / commit so that ALL four global reads are
+        # Staging is split into issue / commit so that ALL the global reads are
         # in flight before the first LDS write forces a wait on one of them.
-        # Fusing each read with its own write instead serialises the tiles into
-        # four HBM round trips, which is enough on its own to leave the kernel
-        # at a fifth of achievable bandwidth.
-        def _issue(gsrc, row_offset_elems, tcs=None):
+        def _issue(gsrc, row_offset_elems, g2r=None):
             """Start this tile's global->register read."""
-            g2r, _ = tcs if tcs is not None else (tc_g2r, tc_r2s)
-            pS = g2r.partition_S(gsrc)
+            pS = (g2r or tc_g2r).partition_S(gsrc)
             frag = fx.make_fragment_like(pS)
             fx.copy(cp_g2r, pS, frag, soffset=row_offset_elems)
             return frag
 
-        def _commit(frag, sdst, tcs=None):
-            """Land an issued tile in LDS."""
-            _, r2s = tcs if tcs is not None else (tc_g2r, tc_r2s)
-            fx.copy(cp_r2s, frag, r2s.partition_D(sdst))
+        def _commit(frag, dst_lo, dst_hi, n_loads, r2s=None):
+            """Land an issued tile in LDS as its two swizzled halves."""
+            del r2s  # destinations already carry the partitioning
+            vec = fx.Vector(frag.load())
+            for off, dst in ((0, dst_lo), (LDS_HALF, dst_hi)):
+                half = fx.Vector.from_elements(
+                    [
+                        vec[j * LOAD_VEC + off + e]
+                        for j in range_constexpr(n_loads)
+                        for e in range_constexpr(LDS_HALF)
+                    ],
+                    dtype=fx.BFloat16,
+                )
+                f = fx.make_fragment_like(dst)
+                f.store(half)
+                fx.copy(cp_r2s, f, dst)
 
         # q / k: [BT, K] token-major, bounded to the sequence so tail rows read
         # a hardware zero (which makes A and o_inter exactly zero there).
@@ -320,21 +415,41 @@ def compile_chunk_gated_delta_o(
         gV = _seq_view(v_tensor, v_base, T_local, fx.Int32(V), (BT, BV), (V, 1))
 
         qk_soffset = chunk_row0 * fx.Int32(STRIDE_QK_C)
-        f_q = _issue(gQ, qk_soffset)
+
+        # q goes straight to an A fragment. Its 4 elements per lane run along K,
+        # which is contiguous in HBM, so this is one 64b buffer load per K-tile.
+        # GEMM3 and GEMM4a share the fragment -- q is read from HBM once.
+        cp_q_g2r = fx.make_copy_atom(fx.rocdl.BufferCopy64b(), fx.BFloat16)
+        q_cp_a = fx.make_tiled_copy_A(cp_q_g2r, mma).get_slice(tid)
+        q_pS = q_cp_a.partition_S(gQ)
+        frag_q = mma.make_fragment_A(gQ)
+        frag_q_rt = q_cp_a.retile(frag_q)
+
         f_k = _issue(gK, qk_soffset)
         f_h = _issue(gH, fx.Int32(0))
-        f_v = _issue(gV, chunk_row0 * fx.Int32(V), (tc_g2r_v, tc_r2s_v))
-        _commit(f_q, sQ)
-        _commit(f_k, sK)
-        _commit(f_h, sH)
-        _commit(f_v, sV_store, (tc_g2r_v, tc_r2s_v))
+        f_v = _issue(gV, chunk_row0 * fx.Int32(V), tc_g2r_v)
+        for kt in range_constexpr(K_TILES):
+            fx.copy(
+                cp_q_g2r,
+                q_pS[None, None, kt],
+                frag_q_rt[None, None, kt],
+                soffset=qk_soffset,
+            )
+        _commit(f_k, tc_r2s.partition_D(sK), tc_r2s.partition_D(sK_hi), N_LOADS_K)
+        _commit(f_h, tc_r2s.partition_D(sH), tc_r2s.partition_D(sH_hi), N_LOADS_H)
+        _commit(
+            f_v,
+            tc_r2s_v.partition_D(sV_store),
+            tc_r2s_v.partition_D(sV_hi),
+            N_LOADS_V,
+        )
 
         # -- Gates --
         # The C fragment gives each thread 4 query rows of the BT tile; GEMM4a's
         # accumulator additionally spans BT_STEPS key columns. So the pair gate
         # needs g at 4 row positions and BT_STEPS column positions.
         frag_row_local = [
-            wid * fx.Int32(16) + lane_m_base * fx.Int32(4) + fx.Int32(e)
+            wid_m * fx.Int32(16) + lane_m_base * fx.Int32(4) + fx.Int32(e)
             for e in range_constexpr(4)
         ]
         frag_row = [chunk_row0 + r for r in frag_row_local]
@@ -346,49 +461,39 @@ def compile_chunk_gated_delta_o(
             )
             g_row = [g_buf[(r,)] for r in frag_row]
             g_col = [
-                g_buf[(chunk_row0 + fx.Int32(nr * 16) + lane_n,)]
-                for nr in range_constexpr(BT_STEPS)
+                g_buf[(chunk_row0 + _nr_n(nr) + lane_n,)]
+                for nr in range_constexpr(BT_STEPS_LOCAL)
             ]
 
         gpu.barrier()
 
         # -- GEMM3: o_inter = q @ h^T  (contraction over K) --
-        g3_cp_a = fx.make_tiled_copy_A(cp_lds_x4, mma).get_slice(tid)
         g3_cp_b = fx.make_tiled_copy_B(cp_lds_x4, mma).get_slice(tid)
-        g3_pS_q = g3_cp_a.partition_S(sQ)
         g3_pS_h = g3_cp_b.partition_S(sH)
-        g3_fq = mma.make_fragment_A(sQ)
         g3_fh = mma.make_fragment_B(sH)
-        g3_fq_rt = g3_cp_a.retile(g3_fq)
         g3_fh_rt = g3_cp_b.retile(g3_fh)
         frag_o = fx.make_rmem_tensor(
             fx.tiled_mma_partition_shape(fx.MmaOperand.C, mma, (BT, BV)), fx.Float32
         )
         frag_o.fill(0.0)
         for kt in range_constexpr(K_TILES):
-            fx.copy(cp_lds_x4, g3_pS_q[None, None, kt], g3_fq_rt[None, None, kt])
             fx.copy(cp_lds_x4, g3_pS_h[None, None, kt], g3_fh_rt[None, None, kt])
-            fx.gemm(mma, frag_o, g3_fq[None, None, kt], g3_fh[None, None, kt], frag_o)
+            fx.gemm(mma, frag_o, frag_q[None, None, kt], g3_fh[None, None, kt], frag_o)
 
         # -- GEMM4a: A = q @ k^T  (contraction over K) --
         # M = query row, N = key row, so B wants k as (n=BT, contraction=K) --
         # exactly how lds_k is stored.
-        g4a_cp_a = fx.make_tiled_copy_A(cp_lds_x4, mma).get_slice(tid)
         g4a_cp_b = fx.make_tiled_copy_B(cp_lds_x4, mma).get_slice(tid)
-        g4a_pS_q = g4a_cp_a.partition_S(sQ)
         g4a_pS_k = g4a_cp_b.partition_S(sK)
-        g4a_fq = mma.make_fragment_A(sQ)
         g4a_fk = mma.make_fragment_B(sK)
-        g4a_fq_rt = g4a_cp_a.retile(g4a_fq)
         g4a_fk_rt = g4a_cp_b.retile(g4a_fk)
         frag_a = fx.make_rmem_tensor(
             fx.tiled_mma_partition_shape(fx.MmaOperand.C, mma, (BT, BT)), fx.Float32
         )
         frag_a.fill(0.0)
         for kt in range_constexpr(K_TILES):
-            fx.copy(cp_lds_x4, g4a_pS_q[None, None, kt], g4a_fq_rt[None, None, kt])
             fx.copy(cp_lds_x4, g4a_pS_k[None, None, kt], g4a_fk_rt[None, None, kt])
-            fx.gemm(mma, frag_a, g4a_fq[None, None, kt], g4a_fk[None, None, kt], frag_a)
+            fx.gemm(mma, frag_a, frag_q[None, None, kt], g4a_fk[None, None, kt], frag_a)
 
         # -- Causal mask + pair gate, then publish A' to LDS --
         # The gate multiply sits INSIDE the select, not after it: above the
@@ -396,8 +501,8 @@ def compile_chunk_gated_delta_o(
         # zero accumulator would turn that into 0 * inf = NaN. Evaluating the
         # product in the discarded arm keeps the surviving arm finite.
         masked = []
-        for nr in range_constexpr(BT_STEPS):
-            bt_col = fx.Int32(nr * 16) + lane_n
+        for nr in range_constexpr(BT_STEPS_LOCAL):
+            bt_col = _nr_n(nr) + lane_n
             a_acc = fx.Vector(frag_a[None, None, nr].load())
             for e in range_constexpr(4):
                 causal = frag_row_local[e] >= bt_col
@@ -409,7 +514,9 @@ def compile_chunk_gated_delta_o(
         pD_A = tc_c_x1.partition_D(sA)
         frag_A_out = fx.make_fragment_like(pD_A)
         frag_A_out.store(
-            _to_bf16(fx.Vector.from_elements(masked, dtype=fx.Float32), BT_STEPS * 4)
+            _to_bf16(
+                fx.Vector.from_elements(masked, dtype=fx.Float32), BT_STEPS_LOCAL * 4
+            )
         )
         fx.copy(cp_lds_x1, frag_A_out, pD_A)
 
@@ -450,14 +557,14 @@ def compile_chunk_gated_delta_o(
             exp_gi = fx.Vector.from_elements(
                 [_fast_exp(g_row[e]) for e in range_constexpr(4)], dtype=fx.Float32
             )
-        for nr in range_constexpr(N_REPEAT):
+        for nr in range_constexpr(N_REPEAT_LOCAL):
             inter = fx.Vector(frag_o[None, None, nr].load())
             intra = fx.Vector(frag_oi[None, None, nr].load())
             if const_expr(USE_G):
                 o_val = (inter * exp_gi + intra) * scale_vec
             else:
                 o_val = (inter + intra) * scale_vec
-            o_col = i_v * fx.Int32(BV) + fx.Int32(nr * 16) + lane_n
+            o_col = i_v * fx.Int32(BV) + _nr_n(nr) + lane_n
             for e in range_constexpr(4):
                 if frag_row_ok[e].ir_value():
                     o_off = o_base + frag_row[e] * stride_o + o_col

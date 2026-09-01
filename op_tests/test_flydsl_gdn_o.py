@@ -91,7 +91,7 @@ def _run_both(inp, *, scale, use_exp2, BV=None):
 
 def _skip_if_unsupported(inp, BV):
     h = inp["h0"].to(inp["u_tm"].dtype)
-    if not flydsl_k6_supported(q=inp["q"], h=h, K=inp["K"], V=inp["V"], BV=BV or 64):
+    if not flydsl_k6_supported(q=inp["q"], h=h, K=inp["K"], V=inp["V"], BV=BV):
         pytest.skip("the FlyDSL K6 kernel does not support this device / shape")
 
 
@@ -109,7 +109,7 @@ def _skip_if_unsupported(inp, BV):
         [640, 384, 500],  # varlen, tail chunk on the last sequence
     ],
 )
-@pytest.mark.parametrize("BV", [32, 64])
+@pytest.mark.parametrize("BV", [32, 64, 128])
 def test_k6_matches_triton(gate, H, Hg, seq_lens, BV):
     """FlyDSL K6 matches Triton K6 given identical h / v_new."""
     K = V = 128
