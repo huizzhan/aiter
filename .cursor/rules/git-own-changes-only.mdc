@@ -1,0 +1,30 @@
+---
+description: Commit and push only this agent's own edits; leave other dirty worktree changes alone
+alwaysApply: true
+---
+
+# 只提交、只推送自己的修改
+
+每个 agent 只 `git add` / `commit` / `push` **自己在本轮会话里改过的文件**。工作区里别人或别的 agent 留下的 diff、未跟踪文件，一律不要动。
+
+## 必须做
+
+- 提交前先 `git status` / `git diff`，对照本轮实际改动的路径，**按文件 add**，禁止 `git add -A`、`git add .`、`git commit -a`。
+- 发现无关修改（例如别人留下的 kernel dirty、未跟踪的 `.cursor/`）时 **跳过**，不要 restore、stash、amend 进别人的提交。
+- `git push` 只推当前分支上自己刚做的 commit；不要 force push，不要把无关本地 commit 一并推上去。
+
+## 不要做
+
+```text
+# BAD — 把工作区所有改动打进一次提交
+git add -A && git commit && git push
+```
+
+```text
+# GOOD — 只暂存本轮自己改的文件
+git add path/to/file_a.py path/to/file_b.py
+git commit -m "..."
+git push <tracking-remote> HEAD
+```
+
+用户若明确要求提交某份已有改动，才可以把它加入暂存区；没有这句话就当它不存在。

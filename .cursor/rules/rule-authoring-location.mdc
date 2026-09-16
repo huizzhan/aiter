@@ -1,0 +1,22 @@
+---
+description: Where to place new Cursor rules in this workspace
+alwaysApply: true
+---
+
+# Rule authoring location
+
+共享规则和技能的权威目录是 `/workspace/aiter/.cursor/`：
+
+- 新 rule：直接写到 `/workspace/aiter/.cursor/rules/<name>.mdc`
+- 新 skill：直接写到 `/workspace/aiter/.cursor/skills/<name>/SKILL.md`
+
+Cursor 只扫描 workspace root 的 `.cursor/rules/*.mdc` 和 `.cursor/skills/*/SKILL.md`，
+且**不跟随符号链接**。所以必须是实体文件，不要用 `ln -s` 从别处链过来——
+软链会被静默跳过，rule 和 skill 都不会加载。
+
+- `/workspace/aiter` 必须留在当前 Cursor workspace 里，否则不会被扫描。
+- 不要在 `/workspace/common_rules_and_skills/.cursor/` 或 `~/.cursor/` 再维护一份同名副本；
+  那两处是历史遗留，改动不会生效。
+- `aiter/.claude/skills/` 是 Claude Code 用的副本。同名 skill 以哪一份为准不确定，
+  所以改 skill 时两边都要同步，或只保留 `.cursor/skills/` 一份。
+- 改动后需重新加载窗口或新开会话才生效（清单在会话启动时注入）。

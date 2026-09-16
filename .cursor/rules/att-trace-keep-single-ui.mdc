@@ -1,0 +1,48 @@
+---
+description: Keep only one steady-state ui trace dir when generating rocprofv3 ATT trace artifacts
+globs: **/trace/scripts/trace_input.yaml
+alwaysApply: true
+---
+
+# ATT trace: keep a single steady-state ui dir
+
+When generating `ir_asm_trace_*` profiling artifacts with rocprofv3 ATT, the
+final committed `trace/` must retain **exactly one** `ui_output_agent_*_dispatch_*`
+directory — the most representative steady-state sample. Do not leave the
+multiple dispatch dirs that ATT emits by default.
+
+## How to pick which one to keep
+1. Drop any sample whose `code.json` `exec_count` sum is below the others
+   (ATT buffer truncation → unrepresentative).
+2. Among the remaining full-sample dispatches, keep the one used as the
+   `hotspot_report.md` basis (or a steady-state, non-warmup one if preferred).
+
+## What to prune (mirror the kept dispatch `<ID>`)
+- `trace/ui_output_agent_*_dispatch_<other>` directories
+- `trace/raw_att/*` — keep only `*_<ID>.att` (the 4 shader-engine files)
+- `trace/trace_meta/stats_ui_output_agent_*_dispatch_<other>.csv`
+
+## Config for future reruns
+Set the trace yaml to capture a single iteration:
+
+```yaml
+kernel_iteration_range: "[1, [1]]"
+```
+
+Leave `out_kernel_trace.csv` and other `trace_meta` CSVs intact (they record all
+launches and are useful for provenance).
+
+## NEVER overwrite an existing trace dir — archive each variant to a NEW dir
+When archiving a freshly collected trace (especially for a different code
+variant / optimization level), **never `rm -rf` or overwrite an existing
+`ir_asm_trace_*` directory**. Give each variant its own distinctive new dir name
+(e.g. add a suffix like `_b0`, `_mfmamask`, `_<opt-tag>`) so prior traces stay
+intact for A/B comparison.
+
+- If an archive step contains cleanup like `rm -rf <dir>/ui_output* / ir_asm/*`,
+  first confirm the target dir is empty / newly created. For an already-populated
+  trace dir, only add alongside — do not delete or replace existing contents.
+- Once overwritten, the original raw capture (`/tmp` intermediates) is usually
+  already cleaned and hard to recover — so prefer creating an extra dir over
+  reusing one. (Real incident: a fine-grained variant's trace overwrote the
+  coarse variant's committed trace because the archive step reused the same dir.)

@@ -1,0 +1,94 @@
+---
+description: GPU kernel 性能优化实战经验（gfx950 / FlyDSL K5 等），与通用工作纪律分开
+alwaysApply: true
+---
+
+# 性能优化实战经验（playbook）
+
+具体的 kernel 优化技巧与踩坑教训。工作纪律（空闲机、baseline、实测为准等）见
+`perf-and-kernel-principles.mdc`。
+
+## 1. occupancy 要同时看 VGPR 和 LDS 两个约束
+- 实际 occupancy = `min(VGPR-bound, LDS-bound)`。很多 hotspot/分析工具的
+  occupancy 行**只算 VGPR**，会漏报 LDS 约束 —— 必须手动核对 LDS。
+- gfx950(CDNA4)：单 CU **LDS = 160KB**、4 SIMD、最多 8 waves/SIMD。WG=256
+  线程=4 wave=每 SIMD 占 1 wave，则 LDS-bound waves/SIMD = `floor(160KB / 每WG LDS)`。
+- 经验阈值（gfx950, 256线程/WG）：保 3 waves/SIMD 需每 WG LDS ≤ `160/3 ≈ 53.3KB`；
+  保 4 waves 需 ≤ 40KB。硬件参数从 trace 的 `out_agent_info.csv`（`Lds_Size_In_Kb`
+  等，取 gfx 行而非 CPU 行）读，不要凭记忆假设容量。
+
+## 2. 非连续访存（MFMA C 布局）→ 经 LDS 中转向量化
+- MFMA 输出/输入按 lane 布局，常使「一个 lane 的若干元素」在 HBM 里跨 stride
+  不连续 → 退化成 scalar `buffer_load_ushort`/`buffer_store_short`，是 VMEM 热点。
+- 解法：换一个「连续方向」做协作式向量搬运到 LDS（`buffer_load_dwordx4` +
+  `ds_write_b128`），再让昂贵的 scatter 发生在廉价的 LDS 上（`ds_read_u16` 等）。
+  - 实例：u 的 scalar HBM load → `lds_u` 协作向量 load（kernel-only −18%）。
+  - 实例：h 快照 scalar store → VK layout + 转置 buffer + b128 合并写
+    （`buffer_store` 56→28，VMEM-store 20.9%→~5%）。
+- bf16→fp32 在 AMD 上就是 `v_lshlrev_b32 ...,16`（左移 16），无专用 cvt 指令。
+
+## 3. 新增 LDS buffer 可能掉 occupancy → 用「别名复用」
+- 加一块 LDS 中转 buffer 可能把每 WG LDS 推过 occupancy 阈值，掉一档 wave，
+  反而更慢（实测：h 独立 16KB 转置 buffer 使 44KB→60KB，3→2 waves，−3.6%）。
+- 解法：让新 buffer **别名复用**一块「生命周期不重叠」的现有 LDS（净增 0），
+  靠 barrier 保证时序。HIP 用此招（`gated_v_panel` 别名 `h_state_panel1`）。
+  - 实例：h 转置 buffer 别名 `lds_k`（h 快照在 chunk 开头、此时本 chunk 的 k
+    尚未载入、上一 chunk 的 k 已被 GEMM2 用完）；加一个 top-of-loop WAR barrier
+    保护上一 chunk 的 lds_k 读 → 维持 44KB / 3 waves，b128 净提速 −3.2%。
+- 别名复用前务必逐条列出该 LDS 的「写/读」时序，确认 WAR/RAW 都有 barrier 覆盖
+  （别名是静默数值错误高发区，每次必过 allclose）。
+
+## 4. trace 的 truncated cycles ≠ 端到端，以 bench 为准
+- 采集脚本常只跑 1–3 个 chunk（truncated kernel），其 cycles 会放大「单 chunk
+  内的局部改善」、淡化「跨 chunk 累积开销」（如每 chunk 多一个 barrier × NT）。
+- 出现「trace 变快但 bench 变慢」时，相信端到端 bench；再回 trace 找累积项
+  （barrier 数、LDS 往返、occupancy 掉档）。
+
+## 5. 瓶颈会转移，按实测 stall 重新定位
+- VMEM-wait 高通常不是「自己」的病，而是 load 发射太晚 / occupancy 不足无法
+  隐藏延迟。降它的手段是预取重叠、减少全局流量、保 occupancy，而非直接盯它。
+- 每做完一步优化，重新出 trace 看 stall 分布——瓶颈常从一类转到另一类
+  （如 u 优化后 VMEM-store 的 h 碎 store 升为头号）。
+
+## 6. hotspot 分析器的 occupancy 必须实算 LDS（已修复，注意旧副本）
+- `hotspot_analyzer.py` 的 occupancy 曾因两个 bug 漏算 LDS、误报「bound by VGPR」：
+  ① LDS 从 kernel-trace CSV 的 `LDS_Block_Size` 读，ATT ui-dir 副本里常缺失/为 0；
+  ② CSV 行用 kernel 名匹配 dispatch dir 名（`ui_output_agent_*_dispatch_N`），
+     永远匹配失败 → wg/LDS/SGPR 全读不到 → LDS limiter 失效。
+- 修复（源头 `FlyDSL/.cursor/skills/kernel-trace-analysis/scripts/hotspot_analyzer.py`）：
+  LDS 改从 ISA `22_final_isa.s` 的 `.group_segment_fixed_size` 读（标 `[ISA]`）；
+  CSV 行改按 `dispatch_N` ↔ `Dispatch_Id` 匹配 + 唯一行兜底。
+- 注意：各 trace 目录下 `trace/scripts/hotspot_analyzer.py` 是采集时拷的旧副本；
+  要重算**已有** trace 的报告，用源头脚本重跑，别用目录内旧副本。
+- 看 occupancy 报告时确认有 `LDS: ... -> N waves/SIMD` 行且 `bound by` 合理；
+  若没有 LDS 行或 waves/wg=0，说明又踩了上面的坑，结果不可信。
+
+## 7. ds 成簇的「LDS 端口背压」用 sched_barrier 拆，别误当 bank 冲突
+- 症状：hotspot 的 **`LDS` 栏**（ds_read/ds_write 指令的**发射 stall**，区别于等数据的
+  `LDS/SMEM-wait` = lgkmcnt）很高。根因常是编译器把无依赖的 ds_read 跨循环迭代
+  hoist 聚成一大簇（如 GEMM operand 的 `ds_read2st64` 连发十几条），把 LDS 端口打满，
+  后续 ds 卡在发射。**这不是 bank 冲突**。
+- 先分清端口背压 vs bank 冲突（都会体现在 LDS 相关开销，但解法不同）：
+  - bank 冲突：采 `SQ_LDS_BANK_CONFLICT`/`SQ_LDS_IDX_ACTIVE`（rocprofv3 `--pmc`），
+    `conf/access = BANK_CONFLICT/(IDX_ACTIVE-BANK_CONFLICT)`。实例 K5 flydsl≈0.148、
+    且 hip 版**数字完全相同** → 是算法 LDS 布局自带、非某实现特有，优先级低。
+  - 端口背压：ATT `code.json` 每条 ds 的 `stall`(col8) 求和 ≈ hotspot `LDS` 栏；再按
+    「前一条指令类别」拆 ds 的 stall，若「after ds」占大头（实例 79%）就是端口背压。
+- 解法：在 GEMM 内层每个 k-step 边界插调度屏障，切断跨迭代的 ds 聚簇：
+  - `rocdl.sched_barrier(0)`：全屏障，最简单，但连 MFMA 跨迭代重叠也切断。
+  - `rocdl.sched_barrier(rocdl.mask_mfma)`：**只放行 MFMA 跨迭代重叠**、仍挡住 ds 聚簇，
+    通常端到端更快（实例 K5 gfx942：baseline 1347us → sched_barrier(0) 1293us(−4%)
+    → sched_barrier(mask_mfma) 1272us(−5.6%)）。mask 位见 `flydsl.expr.rocdl`
+    （`mask_mfma=0x8`/`mask_dsrd=0x100` 等，是 sched_group_barrier 那套 SchedGroupMask）。
+  - sched_barrier/sched_group_barrier **只改指令排布、不改地址/数值**，正确性安全
+    （仍要过 allclose）；ISA 上表现为 `ds_read2st64` 合并读被拆回单条 `ds_read_b64`
+    （实例 read2st64 24→4、read_b64 24→64），ds 条数反而变多但端到端更快——再次印证
+    「瓶颈是成簇背压、不是指令数」。
+- **本例 trace 与 bench 强烈背离**（呼应 §4）：精细版单 dispatch 截断 trace「更难看」
+  （cycles 21.78M>19.37M、`LDS`栏 21.6%>10.2%），端到端 bench 却最快。**一律以 bench 定稿**，
+  trace 只作机制定性参考。
+- 只想让某 arch 生效、别的 arch 零影响：用**编译期变体**——加一个 compile 常量
+  （如 `SCHED_GFX942`），kernel 里 `if const_expr(FLAG): rocdl.sched_barrier(...)`
+  （False 时 FlyDSL 编译期静态消除，不产生任何 IR/ISA）；派发处按 `_IS_GFX942` 传，
+  并入 `_get_or_compile*` 的 `lru_cache` key 成独立编译产物。这样其它 arch（gfx950）
+  编译产物**逐字节不变**，比整份复制 kernel 文件省得多。

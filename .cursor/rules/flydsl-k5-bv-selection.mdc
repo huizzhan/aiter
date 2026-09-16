@@ -1,0 +1,46 @@
+---
+description: FlyDSL K5 (chunk_gated_delta_h mfma16_hip) 的 BV 选择逻辑、gfx942 grid-fill 边界坑与实测/拟合方法
+alwaysApply: true
+---
+
+# FlyDSL K5 BV 选择经验（mfma16_hip）
+
+`fly_hip`（`chunk_gated_delta_h_mfma16_hip`）的 BV 由
+`aiter/ops/flydsl/linear_attention_prefill_kernels.py::_heuristic_bv` 决定。
+
+## 1. 选择顺序：先 csv 精确命中，再 grid-fill 规则
+- 第一优先：`chunk_gdn_h_tuned.csv` 的**精确 dict 匹配**，key =
+  `(arch, dtype, K, V, BT, H, Hg, T_flat, N, is_varlen)`。**没有近似/插值**，
+  key 里任一字段对不上（尤其 `T_flat`、`N`）就 miss。
+- miss 后回退到规则：`_target_bv_for_shape`（trace 标定的 carve-out）→ 否则
+  grid-fill 默认（gfx942 用 `_GFX942_MFMA16HIP_TARGET_CTAS`，gfx950 用 CU 数）。
+- 排查某 shape 为何选到某 BV 时，先确认走的是 csv 命中还是规则：csv 只 tune 了
+  稀疏的 (T_flat, N) 点，生产里大量 T/N 组合都会 miss 落到规则。
+
+## 2. best BV 由 batch 内序列数 N 驱动（不是 T 本身）
+- grid = `N * H * ceil(V/BV)`。best BV 的本质是「在 grid 不低于某目标 CTA 数的
+  前提下取最大 BV」（大 BV per-CTA 开销低，小 BV 铺更多 CTA 填 CU）。
+- 实测（gfx942, H=8/Hg=2/V=128/BT=64/varlen/seqlen=8192, 20260721 卡7）：
+  `N=1→BV16 · N=2→BV32 · N>=3→BV64`。曲线随 N 单调，用 **N/grid 拟合比纯
+  `T_flat` 阈值对变长序列泛化更好**（同一 T 可由不同 N 组成）。
+
+## 3. gfx942 grid-fill 硬门槛会在边界 N 误降档（踩坑）
+- gfx942 通用 `target_ctas=64`。`N=3` 时 BV=64 的 grid=`3*8*2=48`，差一点没到
+  64，规则把它误降到 BV=32 → 实测 **662us vs BV=64 的 498us，慢约 25%**，且
+  出现「T 更小反而更慢、违反单调」的凹坑（典型 BV 选错特征）。
+- 修法（已落地）：对该 shape family（`H==8 && Hg==2 && is_varlen`）在
+  `_target_bv_for_shape` 加 gfx942 carve-out，用
+  `_select_bv_for_grid(target_ctas=48)`（常量
+  `_GFX942_MFMA16HIP_H8HG2_TARGET_CTAS`）——N>=3 的 BV=64 grid(48) 恰好达标。
+  **限定 shape family、不动全局 64、不碰 csv**，避免回归其它 shape。
+- 注意 `_target_bv_for_shape` 需要 `V` 参数才能调 `_select_bv_for_grid`；加
+  carve-out 时别忘了给签名和调用处都补上 `V`（否则 `NameError: name 'V'`）。
+
+## 4. 实测/A-B 扫 BV 的入口
+- 环境变量 **`FLYDSL_K5_MFMA16HIP_BV`** ∈ {16,32,64} 可强制覆盖 fly_hip 的 BV，
+  用于对同一 shape 扫不同 BV（`FLYDSL_K5_KVNAIVE_BV` 是 naive fork 的对应开关）。
+- 典型扫法：`FLYDSL_K5_MFMA16HIP_BV=16/32/64` 各跑一遍
+  `test_flydsl_linear_attention_prefill.py::TestPerformance -k <shape>`，从
+  `fly_hip` 列对每个 T 取最快的 BV 即 best BV。跑前后遵守 GPU 空闲门禁。
+- 验证拟合：**不设** env override 让 heuristic 自选，逐点比对是否命中扫出的
+  best BV（误差应在噪声内 <1%）。
